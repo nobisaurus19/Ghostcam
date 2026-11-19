@@ -12,8 +12,10 @@ using System.Windows.Threading;
 using Ghostcam.Core.Discovery;
 using Ghostcam.Core.Protocol;
 using Ghostcam.Core.Transport;
+using Ghostcam.Media.Audio;
 using Ghostcam.Media.Driver;
 using Ghostcam.Media.Pipeline;
+using Ghostcam.Media.Recording;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Ghostcam.Studio.Services;
@@ -59,7 +61,22 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private readonly UsbDeviceBridge _usbBridge;
     private readonly H264NalParser _nalParser;
     private readonly WebCameraServer _webCameraServer;
+    private readonly WaveOutAudioPlayer _audioPlayer;
+    private readonly StudioVideoRecorder _videoRecorder;
     private CamoQrPairingService _qrPairingService;
+
+    // Settings Persistence & Studio Feature State
+    private StudioSavedConfig _savedConfig = new();
+    private bool _isLoadingSettings;
+    private DispatcherTimer? _settingsSaveTimer;
+    private bool _isMicMonitorEnabled;
+    private bool _isRecordingVideo;
+    private string _recordButtonText = "● REC";
+    private double _audioVuLevel;
+    private string _activeProfileSlot = "P1";
+    private string _profileStatusHint = "";
+    private string? _customLutPath;
+    private CancellationTokenSource? _toastCts;
 
     // Viewport & Rendering State
     private WriteableBitmap? _viewportBitmap;
@@ -143,6 +160,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public RelayCommand RegenerateQrCommand { get; }
     public RelayCommand RefreshQrCommand { get; }
     public RelayCommand ToggleSafariQrModeCommand { get; }
+    public RelayCommand LoadProfileCommand { get; }
+    public RelayCommand SaveActiveProfileCommand { get; }
+    public RelayCommand ToggleRecordVideoCommand { get; }
+    public RelayCommand ImportCubeLutCommand { get; }
+    public RelayCommand ClearCustomLutCommand { get; }
+    public RelayCommand MinimizeToTrayCommand { get; }
+    public RelayCommand ToggleMicMonitorCommand { get; }
 
     public ObservableCollection<string> AvailableLenses { get; } = new()
     {
@@ -179,6 +203,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 OnPropertyChanged(nameof(IsSyntheticMode));
                 OnPropertyChanged(nameof(IsWaitingForSignal));
                 UpdateSourcePipeline();
+                ScheduleSettingsSave();
             }
         }
     }
@@ -346,9 +371,82 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             if (SetProperty(ref _isDarkTheme, value))
             {
                 App.SetTheme(value);
+                ScheduleSettingsSave();
             }
         }
     }
+
+    public bool IsMicMonitorEnabled
+    {
+        get => _isMicMonitorEnabled;
+        set
+        {
+            if (SetProperty(ref _isMicMonitorEnabled, value))
+            {
+                _audioPlayer.MonitorAudio = value;
+            }
+        }
+    }
+
+    public double AudioVuLevel
+    {
+        get => _audioVuLevel;
+        set
+        {
+            if (SetProperty(ref _audioVuLevel, value))
+            {
+                OnPropertyChanged(nameof(VuBar1));
+                OnPropertyChanged(nameof(VuBar2));
+                OnPropertyChanged(nameof(VuBar3));
+                OnPropertyChanged(nameof(VuBar4));
+                OnPropertyChanged(nameof(VuBar5));
+            }
+        }
+    }
+
+    public bool VuBar1 => _audioVuLevel >= 5;
+    public bool VuBar2 => _audioVuLevel >= 20;
+    public bool VuBar3 => _audioVuLevel >= 40;
+    public bool VuBar4 => _audioVuLevel >= 65;
+    public bool VuBar5 => _audioVuLevel >= 85;
+
+    public bool IsRecordingVideo
+    {
+        get => _isRecordingVideo;
+        set => SetProperty(ref _isRecordingVideo, value);
+    }
+
+    public string RecordButtonText
+    {
+        get => _recordButtonText;
+        set => SetProperty(ref _recordButtonText, value);
+    }
+
+    public string ActiveProfileSlot
+    {
+        get => _activeProfileSlot;
+        set
+        {
+            if (SetProperty(ref _activeProfileSlot, value))
+            {
+                OnPropertyChanged(nameof(IsProfile1));
+                OnPropertyChanged(nameof(IsProfile2));
+                OnPropertyChanged(nameof(IsProfile3));
+            }
+        }
+    }
+
+    public bool IsProfile1 => ActiveProfileSlot == "P1";
+    public bool IsProfile2 => ActiveProfileSlot == "P2";
+    public bool IsProfile3 => ActiveProfileSlot == "P3";
+
+    public string ProfileStatusHint
+    {
+        get => _profileStatusHint;
+        set => SetProperty(ref _profileStatusHint, value);
+    }
+
+    public string CustomLutDisplayName => FilterSettings.CustomLutName;
 
     // Hardware Controls
     public string SelectedLens
@@ -371,6 +469,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                     _webCameraServer.UpdateDesiredState(lens: webLens);
                     _ = SyncSettingsToPhoneAsync();
                 }
+
+                ScheduleSettingsSave();
             }
         }
     }
@@ -389,6 +489,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                     _webCameraServer.UpdateDesiredState(width: w, height: h);
                     _ = SyncSettingsToPhoneAsync();
                 }
+
+                ScheduleSettingsSave();
             }
         }
     }
@@ -407,6 +509,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                     _webCameraServer.UpdateDesiredState(fps: fps);
                     _ = SyncSettingsToPhoneAsync();
                 }
+
+                ScheduleSettingsSave();
             }
         }
     }
@@ -421,6 +525,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 FilterSettings.HardwareIso = (float)value;
                 _webCameraServer.UpdateDesiredState(iso: value);
                 _ = SyncSettingsToPhoneAsync();
+                ScheduleSettingsSave();
             }
         }
     }
@@ -435,6 +540,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 FilterSettings.HardwareShutter = (float)value;
                 _webCameraServer.UpdateDesiredState(shutter: value);
                 _ = SyncSettingsToPhoneAsync();
+                ScheduleSettingsSave();
             }
         }
     }
@@ -449,6 +555,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 FilterSettings.HardwareWbKelvin = (float)value;
                 _webCameraServer.UpdateDesiredState(wb: value);
                 _ = SyncSettingsToPhoneAsync();
+                ScheduleSettingsSave();
             }
         }
     }
@@ -463,6 +570,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 FilterSettings.HardwareFocus = (float)value;
                 _webCameraServer.UpdateDesiredState(focus: value);
                 _ = SyncSettingsToPhoneAsync();
+                ScheduleSettingsSave();
             }
         }
     }
@@ -530,6 +638,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _virtualCameraDriver = new CamoVirtualCameraDriver();
         _ghostCamMf = new GhostCamMfVirtualCamera();
         _nalParser = new H264NalParser();
+        _audioPlayer = new WaveOutAudioPlayer();
+        _videoRecorder = new StudioVideoRecorder();
 
         // 2. Initialize Transport & Discovery Subsystems
         _sessionServer = new CamoMobileSessionServer();
@@ -537,6 +647,43 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _qrPairingService = new CamoQrPairingService();
         _webCameraServer = new WebCameraServer();
         AttachQrPairingHandlers();
+
+        // 2B. Initialize Debounced Auto-Save & Load Saved Studio Settings
+        _settingsSaveTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(400)
+        };
+        _settingsSaveTimer.Tick += (_, _) =>
+        {
+            _settingsSaveTimer?.Stop();
+            SaveSettingsNow();
+        };
+
+        _savedConfig = StudioSettingsStore.Load();
+        _isLoadingSettings = true;
+        try
+        {
+            IsDarkTheme = _savedConfig.IsDarkTheme;
+            ApplyProfileData(_savedConfig.Current);
+        }
+        finally
+        {
+            _isLoadingSettings = false;
+        }
+
+        FilterSettings.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(StudioFilterSettings.CustomLutName))
+            {
+                OnPropertyChanged(nameof(CustomLutDisplayName));
+            }
+            else if (e.PropertyName == nameof(StudioFilterSettings.CustomLut) && FilterSettings.CustomLut == null)
+            {
+                _customLutPath = null;
+            }
+
+            ScheduleSettingsSave();
+        };
 
         // Setup Virtual Camera Status
         if (GhostCamMfVirtualCamera.IsComRegistered && GhostCamMfVirtualCamera.IsInstalledDllUpToDate)
@@ -682,6 +829,55 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             IsSafariQrMode = true;
             GenerateQrCodeImage();
         });
+        LoadProfileCommand = new RelayCommand(p =>
+        {
+            if (p is string slot && !string.IsNullOrWhiteSpace(slot))
+            {
+                ActiveProfileSlot = slot;
+                if (_savedConfig.Profiles.TryGetValue(slot, out var prof))
+                {
+                    _isLoadingSettings = true;
+                    try
+                    {
+                        ApplyProfileData(prof);
+                    }
+                    finally
+                    {
+                        _isLoadingSettings = false;
+                    }
+                    ProfileStatusHint = $"Loaded {slot}";
+                    ShowToast($"Loaded Profile {slot}", 2500);
+                }
+                else
+                {
+                    ProfileStatusHint = $"Profile {slot} empty";
+                    ShowToast($"Profile {slot} empty (click SAVE)", 2500);
+                }
+                SaveSettingsNow();
+            }
+        });
+        SaveActiveProfileCommand = new RelayCommand(() =>
+        {
+            _savedConfig.Profiles[ActiveProfileSlot] = CaptureProfileData();
+            SaveSettingsNow();
+            ProfileStatusHint = $"Saved {ActiveProfileSlot}";
+            ShowToast($"Saved to {ActiveProfileSlot}!", 2500);
+        });
+        ToggleRecordVideoCommand = new RelayCommand(ExecuteToggleRecordVideo);
+        ImportCubeLutCommand = new RelayCommand(ExecuteImportCubeLut);
+        ClearCustomLutCommand = new RelayCommand(() =>
+        {
+            FilterSettings.CustomLut = null;
+            FilterSettings.CustomLutName = "None";
+            _customLutPath = null;
+            OnPropertyChanged(nameof(CustomLutDisplayName));
+            ScheduleSettingsSave();
+        });
+        MinimizeToTrayCommand = new RelayCommand(() =>
+        {
+            (System.Windows.Application.Current?.MainWindow as MainWindow)?.MinimizeToSystemTray();
+        });
+        ToggleMicMonitorCommand = new RelayCommand(() => IsMicMonitorEnabled = !IsMicMonitorEnabled);
 
         // 4. Hook Events
         _syntheticSource.OnFrameGenerated += HandleSyntheticFrame;
@@ -720,12 +916,31 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             });
         };
         _webCameraServer.JpegFrameReceived += HandleJpegFrame;
+        _webCameraServer.H264ChunkReceived += chunk =>
+        {
+            Interlocked.Add(ref _webCamBytesInWindow, chunk.Length);
+            Interlocked.Increment(ref _webCamFramesDecoded);
+            Interlocked.Exchange(ref _lastRealFrameTimestamp, Stopwatch.GetTimestamp());
+            if (!IsPhoneConnected || SourceMode != CamoSourceMode.SafariWebCam)
+            {
+                _ = _dispatcher.BeginInvoke(() =>
+                {
+                    SourceMode = CamoSourceMode.SafariWebCam;
+                    ConnectionStatusBadge = "🟢 WEBCODECS H264 (LIVE)";
+                    IsPhoneConnected = true;
+                    if (string.IsNullOrEmpty(ConnectedPhoneName) || ConnectedPhoneName == "No Mobile Connected")
+                        ConnectedPhoneName = "iPhone / Mobile (H264)";
+                });
+            }
+            _nalParser.FeedChunk(chunk);
+        };
+        _webCameraServer.AudioPacketReceived += pcm => _audioPlayer.PushPcmChunk(pcm);
         _webCameraServer.ClientTelemetryReceived += HandleWebCamTelemetry;
 
-        // 5. Start Telemetry Timer (updates at 2 Hz)
+        // 5. Start Telemetry Timer (150ms for responsive VU meter & recording timer; FPS calc stays 500ms-gated)
         _telemetryTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromMilliseconds(500)
+            Interval = TimeSpan.FromMilliseconds(150)
         };
         _telemetryTimer.Tick += OnTelemetryTick;
         _telemetryTimer.Start();
@@ -740,8 +955,22 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             _webCameraServer.UpdateDesiredState(width: initW, height: initH, fps: initFps);
             _ = _webCameraServer.StartAsync();
 
-            SourceMode = CamoSourceMode.SafariWebCam;
-            ConnectionStatusBadge = "🌐 MOBILE WEBCAM (READY)";
+            _isLoadingSettings = true;
+            try
+            {
+                SourceMode = Enum.TryParse<CamoSourceMode>(_savedConfig.SourceMode, out var savedMode)
+                    ? savedMode
+                    : CamoSourceMode.SafariWebCam;
+            }
+            finally
+            {
+                _isLoadingSettings = false;
+            }
+
+            if (SourceMode == CamoSourceMode.SafariWebCam || SourceMode == CamoSourceMode.WifiQrPairing)
+            {
+                ConnectionStatusBadge = "🌐 MOBILE WEBCAM (READY)";
+            }
             UsbStatusText = $"Mobile WebCam server listening on {_webCameraServer.HttpsUrl}";
             GenerateQrCodeImage();
             UpdateSourcePipeline();
@@ -1147,6 +1376,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             // 1. Process studio frame through 60 FPS pixel pipeline
             byte[] processedBgra = _frameProcessor.ProcessFrame(sourceBgra, width, height, FilterSettings);
 
+            if (_videoRecorder.IsRecording)
+            {
+                _videoRecorder.PushFrame(processedBgra, width, height);
+            }
+
             // Store latest frame for snapshots and decoupled UI viewport render
             lock (_renderLock)
             {
@@ -1234,6 +1468,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         {
             _titleSyncTicks++;
             EnsureProcessWindowTitles();
+        }
+
+        AudioVuLevel = _audioPlayer.CurrentVuLevel;
+        if (_videoRecorder.IsRecording)
+        {
+            RecordButtonText = $"■ {_videoRecorder.RecordedDuration:mm\\:ss}";
         }
 
         // Calculate rendering FPS
@@ -1497,6 +1737,238 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
+    private void ShowToast(string message, int durationMs = 3000)
+    {
+        SnapshotNotificationText = message;
+        ShowSnapshotNotification = true;
+
+        _toastCts?.Cancel();
+        _toastCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _toastCts = cts;
+
+        _ = Task.Delay(durationMs, cts.Token).ContinueWith(t =>
+        {
+            if (!t.IsCanceled)
+            {
+                _dispatcher.Invoke(() => ShowSnapshotNotification = false);
+            }
+        }, TaskScheduler.Default);
+    }
+
+    private void ExecuteToggleRecordVideo()
+    {
+        if (_videoRecorder.IsRecording)
+        {
+            string? saved = _videoRecorder.Stop();
+            IsRecordingVideo = false;
+            RecordButtonText = "● REC";
+            if (!string.IsNullOrWhiteSpace(saved))
+            {
+                ShowToast($"Recorded: {Path.GetFileName(saved)}", 4000);
+            }
+            return;
+        }
+
+        int recW, recH;
+        lock (_renderLock)
+        {
+            recW = _latestFrameWidth;
+            recH = _latestFrameHeight;
+        }
+
+        (int fallbackW, int fallbackH, int fps) = ParseSelectedResolutionAndFps();
+        if (recW <= 0 || recH <= 0)
+        {
+            recW = fallbackW;
+            recH = fallbackH;
+        }
+
+        string picturesDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Ghostcam");
+        string path = Path.Combine(picturesDir, $"Ghostcam_Rec_{DateTime.Now:yyyyMMdd_HHmmss}.avi");
+
+        try
+        {
+            if (_videoRecorder.Start(path, recW, recH, Math.Min(fps, 30)))
+            {
+                IsRecordingVideo = true;
+                RecordButtonText = "■ 00:00";
+            }
+            else
+            {
+                ShowToast("Could not start recording", 3000);
+            }
+        }
+        catch (Exception ex)
+        {
+            IsRecordingVideo = false;
+            RecordButtonText = "● REC";
+            ShowToast($"Recording failed: {ex.Message}", 4000);
+        }
+    }
+
+    private void ExecuteImportCubeLut()
+    {
+        try
+        {
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Filter = "3D LUT (*.cube)|*.cube",
+                Title = "Select .cube 3D LUT"
+            };
+
+            if (dlg.ShowDialog() == true)
+            {
+                CubeLut3D lut = CubeLut3D.LoadFromFile(dlg.FileName);
+                FilterSettings.CustomLut = lut;
+                FilterSettings.CustomLutName = Path.GetFileName(dlg.FileName);
+                _customLutPath = dlg.FileName;
+                OnPropertyChanged(nameof(CustomLutDisplayName));
+                ScheduleSettingsSave();
+                ShowToast($"Loaded LUT: {FilterSettings.CustomLutName}", 3000);
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowToast($"LUT error: {ex.Message}", 4000);
+        }
+    }
+
+    private void ScheduleSettingsSave()
+    {
+        if (_isLoadingSettings || _settingsSaveTimer == null)
+        {
+            return;
+        }
+
+        if (!_dispatcher.CheckAccess())
+        {
+            _ = _dispatcher.BeginInvoke(ScheduleSettingsSave);
+            return;
+        }
+
+        _settingsSaveTimer.Stop();
+        _settingsSaveTimer.Start();
+    }
+
+    private void SaveSettingsNow()
+    {
+        if (_isLoadingSettings)
+        {
+            return;
+        }
+
+        _savedConfig.IsDarkTheme = IsDarkTheme;
+        _savedConfig.SourceMode = SourceMode.ToString();
+        _savedConfig.Current = CaptureProfileData();
+        StudioSettingsStore.Save(_savedConfig);
+    }
+
+    private StudioProfileData CaptureProfileData()
+    {
+        return new StudioProfileData
+        {
+            SelectedLens = SelectedLens,
+            SelectedResolution = SelectedResolution,
+            SelectedFps = SelectedFps,
+            HardwareIso = HardwareIso,
+            HardwareShutter = HardwareShutter,
+            HardwareWbKelvin = HardwareWbKelvin,
+            HardwareFocus = HardwareFocus,
+            Zoom = FilterSettings.Zoom,
+            PanX = FilterSettings.PanX,
+            PanY = FilterSettings.PanY,
+            RotationDegrees = FilterSettings.RotationDegrees,
+            MirrorHorizontal = FilterSettings.MirrorHorizontal,
+            Brightness = FilterSettings.Brightness,
+            Contrast = FilterSettings.Contrast,
+            Saturation = FilterSettings.Saturation,
+            Temperature = FilterSettings.Temperature,
+            Tint = FilterSettings.Tint,
+            Sharpness = FilterSettings.Sharpness,
+            Vignette = FilterSettings.Vignette,
+            BackgroundBlur = FilterSettings.BackgroundBlur,
+            ChromaKeyEnabled = FilterSettings.ChromaKeyEnabled,
+            ChromaKeyThreshold = FilterSettings.ChromaKeyThreshold,
+            AutoFramingEnabled = FilterSettings.AutoFramingEnabled,
+            ColorPreset = FilterSettings.ColorPreset.ToString(),
+            ShowHudOverlay = FilterSettings.ShowHudOverlay,
+            CustomLutPath = _customLutPath
+        };
+    }
+
+    private void ApplyProfileData(StudioProfileData? profile)
+    {
+        if (profile == null)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(profile.SelectedLens) && AvailableLenses.Contains(profile.SelectedLens))
+        {
+            SelectedLens = profile.SelectedLens;
+        }
+        if (!string.IsNullOrWhiteSpace(profile.SelectedResolution) && AvailableResolutions.Contains(profile.SelectedResolution))
+        {
+            SelectedResolution = profile.SelectedResolution;
+        }
+        if (!string.IsNullOrWhiteSpace(profile.SelectedFps) && AvailableFps.Contains(profile.SelectedFps))
+        {
+            SelectedFps = profile.SelectedFps;
+        }
+
+        HardwareIso = Math.Clamp(profile.HardwareIso, 50, 3200);
+        HardwareShutter = Math.Clamp(profile.HardwareShutter, 30, 1000);
+        HardwareWbKelvin = Math.Clamp(profile.HardwareWbKelvin, 2500, 7500);
+        HardwareFocus = Math.Clamp(profile.HardwareFocus, 0.0, 1.0);
+
+        FilterSettings.Zoom = profile.Zoom;
+        FilterSettings.PanX = profile.PanX;
+        FilterSettings.PanY = profile.PanY;
+        FilterSettings.RotationDegrees = profile.RotationDegrees;
+        FilterSettings.MirrorHorizontal = profile.MirrorHorizontal;
+        FilterSettings.Brightness = profile.Brightness;
+        FilterSettings.Contrast = profile.Contrast;
+        FilterSettings.Saturation = profile.Saturation;
+        FilterSettings.Temperature = profile.Temperature;
+        FilterSettings.Tint = profile.Tint;
+        FilterSettings.Sharpness = profile.Sharpness;
+        FilterSettings.Vignette = profile.Vignette;
+        FilterSettings.BackgroundBlur = profile.BackgroundBlur;
+        FilterSettings.ChromaKeyEnabled = profile.ChromaKeyEnabled;
+        FilterSettings.ChromaKeyThreshold = profile.ChromaKeyThreshold;
+        FilterSettings.AutoFramingEnabled = profile.AutoFramingEnabled;
+        FilterSettings.ShowHudOverlay = profile.ShowHudOverlay;
+
+        ActivePreset = Enum.TryParse<StudioColorPreset>(profile.ColorPreset, out var preset)
+            ? preset
+            : StudioColorPreset.None;
+
+        if (!string.IsNullOrWhiteSpace(profile.CustomLutPath) && File.Exists(profile.CustomLutPath))
+        {
+            try
+            {
+                FilterSettings.CustomLut = CubeLut3D.LoadFromFile(profile.CustomLutPath);
+                FilterSettings.CustomLutName = Path.GetFileName(profile.CustomLutPath);
+                _customLutPath = profile.CustomLutPath;
+            }
+            catch
+            {
+                FilterSettings.CustomLut = null;
+                FilterSettings.CustomLutName = "None";
+                _customLutPath = null;
+            }
+        }
+        else
+        {
+            FilterSettings.CustomLut = null;
+            FilterSettings.CustomLutName = "None";
+            _customLutPath = null;
+        }
+
+        OnPropertyChanged(nameof(CustomLutDisplayName));
+    }
+
     private async Task SyncSettingsToPhoneAsync()
     {
         if (!_sessionServer.IsClientConnected) return;
@@ -1620,9 +2092,25 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
+    private int _disposed;
+
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
         _telemetryTimer?.Stop();
+        _settingsSaveTimer?.Stop();
+        if (_videoRecorder.IsRecording)
+        {
+            _videoRecorder.Stop();
+        }
+        SaveSettingsNow();
+        try { _toastCts?.Cancel(); } catch { }
+        _toastCts?.Dispose();
+        _toastCts = null;
+        _videoRecorder.Dispose();
+        _audioPlayer.Dispose();
         _syntheticSource.Dispose();
         _virtualCameraDriver.Dispose();
         _ghostCamMf.Dispose();

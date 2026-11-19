@@ -211,9 +211,213 @@
                     </StackPanel>
                 </StackPanel>
 
-                <!-- Right: YOYU Signature Dual-State Pixel Icon Toggles (THEME | HUD) -->
+                <!-- Right: Profiles | Audio VU + MIC | THEME | HUD | TRAY -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Rectangle Width="1" Height="28" Fill="{DynamicResource BrushBorderPassive}" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                    <StackPanel.Resources>
+                        <Style x:Key="HeaderProfileSlotBaseStyle" TargetType="Button" BasedOn="{StaticResource StudioButtonStyle}">
+                            <Setter Property="Padding" Value="7,4"/>
+                            <Setter Property="FontFamily" Value="{StaticResource FontYoyuMono}"/>
+                            <Setter Property="FontSize" Value="10"/>
+                            <Setter Property="FontWeight" Value="Bold"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="border"
+                                                Background="{TemplateBinding Background}"
+                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                CornerRadius="0"
+                                                SnapsToDevicePixels="True">
+                                            <ContentPresenter HorizontalAlignment="Center"
+                                                              VerticalAlignment="Center"
+                                                              Margin="{TemplateBinding Padding}"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="border" Property="BorderBrush" Value="{DynamicResource BrushBorderActive}"/>
+                                                <Setter TargetName="border" Property="Opacity" Value="0.88"/>
+                                            </Trigger>
+                                            <Trigger Property="IsPressed" Value="True">
+                                                <Setter TargetName="border" Property="Opacity" Value="0.72"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </StackPanel.Resources>
+
+                    <Rectangle Width="1" Height="28" Fill="{DynamicResource BrushBorderPassive}" Margin="0,0,10,0" VerticalAlignment="Center"/>
+
+                    <!-- Profile Slot Cluster (P1 / P2 / P3 + SAVE) -->
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Content="P1"
+                                Command="{Binding LoadProfileCommand}"
+                                CommandParameter="P1"
+                                Margin="0,0,3,0"
+                                ToolTip="Load Profile Slot P1">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource HeaderProfileSlotBaseStyle}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsProfile1}" Value="True">
+                                            <Setter Property="Background" Value="{DynamicResource BrushCtaPrimaryBg}"/>
+                                            <Setter Property="Foreground" Value="{DynamicResource BrushCtaPrimaryFg}"/>
+                                            <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderActive}"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="P2"
+                                Command="{Binding LoadProfileCommand}"
+                                CommandParameter="P2"
+                                Margin="0,0,3,0"
+                                ToolTip="Load Profile Slot P2">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource HeaderProfileSlotBaseStyle}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsProfile2}" Value="True">
+                                            <Setter Property="Background" Value="{DynamicResource BrushCtaPrimaryBg}"/>
+                                            <Setter Property="Foreground" Value="{DynamicResource BrushCtaPrimaryFg}"/>
+                                            <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderActive}"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="P3"
+                                Command="{Binding LoadProfileCommand}"
+                                CommandParameter="P3"
+                                Margin="0,0,3,0"
+                                ToolTip="Load Profile Slot P3">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource HeaderProfileSlotBaseStyle}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsProfile3}" Value="True">
+                                            <Setter Property="Background" Value="{DynamicResource BrushCtaPrimaryBg}"/>
+                                            <Setter Property="Foreground" Value="{DynamicResource BrushCtaPrimaryFg}"/>
+                                            <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderActive}"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="SAVE"
+                                Style="{StaticResource StudioButtonStyle}"
+                                Command="{Binding SaveActiveProfileCommand}"
+                                Padding="7,4"
+                                FontFamily="{StaticResource FontYoyuMono}"
+                                FontSize="10"
+                                FontWeight="Bold"
+                                ToolTip="Save current settings to active profile slot"/>
+                    </StackPanel>
+
+                    <Rectangle Width="1" Height="22" Fill="{DynamicResource BrushBorderPassive}" Margin="8,0" VerticalAlignment="Center"/>
+
+                    <!-- 1-Bit Pixel VU Meter + MIC Monitor Toggle -->
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Height="20" VerticalAlignment="Center" Margin="0,0,6,0" ToolTip="Live Mobile Audio Level">
+                            <Rectangle Width="3" Height="6" VerticalAlignment="Bottom" Margin="0,0,2,0" Fill="{DynamicResource BrushAccentGreen}">
+                                <Rectangle.Style>
+                                    <Style TargetType="Rectangle">
+                                        <Setter Property="Opacity" Value="0.18"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding VuBar1}" Value="True">
+                                                <Setter Property="Opacity" Value="1.0"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Rectangle.Style>
+                            </Rectangle>
+                            <Rectangle Width="3" Height="9" VerticalAlignment="Bottom" Margin="0,0,2,0" Fill="{DynamicResource BrushAccentGreen}">
+                                <Rectangle.Style>
+                                    <Style TargetType="Rectangle">
+                                        <Setter Property="Opacity" Value="0.18"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding VuBar2}" Value="True">
+                                                <Setter Property="Opacity" Value="1.0"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Rectangle.Style>
+                            </Rectangle>
+                            <Rectangle Width="3" Height="12" VerticalAlignment="Bottom" Margin="0,0,2,0" Fill="{DynamicResource BrushAccentGreen}">
+                                <Rectangle.Style>
+                                    <Style TargetType="Rectangle">
+                                        <Setter Property="Opacity" Value="0.18"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding VuBar3}" Value="True">
+                                                <Setter Property="Opacity" Value="1.0"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Rectangle.Style>
+                            </Rectangle>
+                            <Rectangle Width="3" Height="15" VerticalAlignment="Bottom" Margin="0,0,2,0" Fill="#EEFF5A">
+                                <Rectangle.Style>
+                                    <Style TargetType="Rectangle">
+                                        <Setter Property="Opacity" Value="0.18"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding VuBar4}" Value="True">
+                                                <Setter Property="Opacity" Value="1.0"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Rectangle.Style>
+                            </Rectangle>
+                            <Rectangle Width="3" Height="18" VerticalAlignment="Bottom" Fill="#FF4130">
+                                <Rectangle.Style>
+                                    <Style TargetType="Rectangle">
+                                        <Setter Property="Opacity" Value="0.18"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding VuBar5}" Value="True">
+                                                <Setter Property="Opacity" Value="1.0"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Rectangle.Style>
+                            </Rectangle>
+                        </StackPanel>
+
+                        <ToggleButton IsChecked="{Binding IsMicMonitorEnabled, Mode=TwoWay}"
+                                      Cursor="Hand"
+                                      ToolTip="Monitor Mobile Audio on PC Speakers">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border x:Name="micBorder"
+                                            Background="{DynamicResource BrushCardBg}"
+                                            BorderBrush="{DynamicResource BrushBorderPassive}"
+                                            BorderThickness="1"
+                                            CornerRadius="0"
+                                            Padding="7,4"
+                                            SnapsToDevicePixels="True">
+                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Rectangle x:Name="micLed" Width="5" Height="5" Fill="{DynamicResource BrushInkMuted}" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                                            <TextBlock x:Name="micText"
+                                                       Text="MIC"
+                                                       FontFamily="{StaticResource FontYoyuMono}"
+                                                       FontSize="10"
+                                                       FontWeight="Bold"
+                                                       Foreground="{DynamicResource BrushInkSecondary}"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="micBorder" Property="BorderBrush" Value="{DynamicResource BrushBorderActive}"/>
+                                        </Trigger>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="micBorder" Property="BorderBrush" Value="{DynamicResource BrushAccentGreen}"/>
+                                            <Setter TargetName="micBorder" Property="Background" Value="{DynamicResource BrushInputBg}"/>
+                                            <Setter TargetName="micLed" Property="Fill" Value="{DynamicResource BrushAccentGreen}"/>
+                                            <Setter TargetName="micText" Property="Foreground" Value="{DynamicResource BrushAccentGreen}"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+                    </StackPanel>
+
+                    <Rectangle Width="1" Height="22" Fill="{DynamicResource BrushBorderPassive}" Margin="8,0" VerticalAlignment="Center"/>
 
                     <!-- THEME Dual-State Pixel Toggle -->
                     <Button Command="{Binding ToggleThemeCommand}" Cursor="Hand" ToolTip="Toggle Light / Dark Studio Theme">
@@ -284,7 +488,7 @@
                         </Button.Template>
                     </Button>
 
-                    <Rectangle Width="1" Height="22" Fill="{DynamicResource BrushBorderPassive}" Margin="6,0" VerticalAlignment="Center"/>
+                    <Rectangle Width="1" Height="22" Fill="{DynamicResource BrushBorderPassive}" Margin="4,0" VerticalAlignment="Center"/>
 
                     <!-- HUD Dual-State Pixel Toggle -->
                     <ToggleButton IsChecked="{Binding FilterSettings.ShowHudOverlay}" Cursor="Hand" ToolTip="Toggle Grid / HUD Overlay">
@@ -337,6 +541,41 @@
                             </ControlTemplate>
                         </ToggleButton.Template>
                     </ToggleButton>
+
+                    <Rectangle Width="1" Height="22" Fill="{DynamicResource BrushBorderPassive}" Margin="4,0" VerticalAlignment="Center"/>
+
+                    <!-- TRAY Pixel Button -->
+                    <Button Command="{Binding MinimizeToTrayCommand}" Cursor="Hand" ToolTip="Minimize to System Tray (Keep Virtual Camera Running)">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="trayBg" Background="Transparent" CornerRadius="0" Padding="8,4">
+                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <Canvas Width="14" Height="14" SnapsToDevicePixels="True" HorizontalAlignment="Center" Margin="0,0,0,3">
+                                            <!-- Downward Arrow -->
+                                            <Rectangle Canvas.Left="6" Canvas.Top="1" Width="2" Height="6" Fill="{DynamicResource BrushInkPrimary}"/>
+                                            <Rectangle Canvas.Left="4" Canvas.Top="5" Width="6" Height="2" Fill="{DynamicResource BrushInkPrimary}"/>
+                                            <Rectangle Canvas.Left="6" Canvas.Top="7" Width="2" Height="2" Fill="{DynamicResource BrushInkPrimary}"/>
+                                            <!-- Tray Base -->
+                                            <Rectangle Canvas.Left="1" Canvas.Top="9" Width="2" Height="4" Fill="{DynamicResource BrushInkPrimary}"/>
+                                            <Rectangle Canvas.Left="11" Canvas.Top="9" Width="2" Height="4" Fill="{DynamicResource BrushInkPrimary}"/>
+                                            <Rectangle Canvas.Left="1" Canvas.Top="11" Width="12" Height="2" Fill="{DynamicResource BrushInkPrimary}"/>
+                                        </Canvas>
+                                        <TextBlock Text="TRAY"
+                                                   FontFamily="{StaticResource FontYoyuPixel}"
+                                                   FontSize="8"
+                                                   FontWeight="Normal"
+                                                   Foreground="{DynamicResource BrushInkMuted}"
+                                                   HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="trayBg" Property="Background" Value="{DynamicResource BrushInputBg}"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
                 </StackPanel>
             </Grid>
         </Border>
@@ -1144,6 +1383,57 @@
                                     FontSize="10.5"
                                     Padding="12,8"
                                     Margin="6,0,0,0"/>
+
+                            <Button Content="{Binding RecordButtonText}"
+                                    Command="{Binding ToggleRecordVideoCommand}"
+                                    FontFamily="{StaticResource FontYoyuMono}"
+                                    FontSize="10.5"
+                                    FontWeight="Bold"
+                                    Padding="12,8"
+                                    Margin="6,0,0,0"
+                                    Cursor="Hand"
+                                    ToolTip="Record Processed Studio Video (.avi)">
+                                <Button.Style>
+                                    <Style TargetType="Button">
+                                        <Setter Property="Background" Value="{DynamicResource BrushCardBg}"/>
+                                        <Setter Property="Foreground" Value="{DynamicResource BrushInkPrimary}"/>
+                                        <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderPassive}"/>
+                                        <Setter Property="BorderThickness" Value="1"/>
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="Button">
+                                                    <Border x:Name="recBorder"
+                                                            Background="{TemplateBinding Background}"
+                                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                                            BorderThickness="{TemplateBinding BorderThickness}"
+                                                            CornerRadius="0"
+                                                            SnapsToDevicePixels="True">
+                                                        <ContentPresenter HorizontalAlignment="Center"
+                                                                          VerticalAlignment="Center"
+                                                                          Margin="{TemplateBinding Padding}"/>
+                                                    </Border>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter TargetName="recBorder" Property="BorderBrush" Value="{DynamicResource BrushBorderActive}"/>
+                                                            <Setter TargetName="recBorder" Property="Opacity" Value="0.9"/>
+                                                        </Trigger>
+                                                        <Trigger Property="IsPressed" Value="True">
+                                                            <Setter TargetName="recBorder" Property="Opacity" Value="0.75"/>
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsRecordingVideo}" Value="True">
+                                                <Setter Property="Background" Value="{DynamicResource BrushAccentRed}"/>
+                                                <Setter Property="BorderBrush" Value="{DynamicResource BrushAccentRed}"/>
+                                                <Setter Property="Foreground" Value="#FFFFFF"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
                         </StackPanel>
                     </DockPanel>
                 </Border>
@@ -1212,6 +1502,52 @@
                                            HorizontalAlignment="Right"/>
                             </DockPanel>
                             <Slider Minimum="-1.0" Maximum="1.0" Value="{Binding FilterSettings.PanY, Mode=TwoWay}" IsMoveToPointEnabled="True" SmallChange="0.05" LargeChange="0.2" Margin="0,2,0,0"/>
+
+                            <!-- Auto Face Framing (Center Stage) -->
+                            <ToggleButton IsChecked="{Binding FilterSettings.AutoFramingEnabled, Mode=TwoWay}"
+                                          Cursor="Hand"
+                                          Margin="0,10,0,0"
+                                          ToolTip="Automatically pan &amp; zoom to keep subject centered">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="autoFrameBorder"
+                                                Background="{DynamicResource BrushInputBg}"
+                                                BorderBrush="{DynamicResource BrushBorderPassive}"
+                                                BorderThickness="1"
+                                                CornerRadius="0"
+                                                Padding="10,7"
+                                                SnapsToDevicePixels="True">
+                                            <DockPanel>
+                                                <Rectangle x:Name="autoFrameLed"
+                                                           DockPanel.Dock="Left"
+                                                           Width="6"
+                                                           Height="6"
+                                                           Fill="{DynamicResource BrushInkMuted}"
+                                                           Margin="0,0,8,0"
+                                                           VerticalAlignment="Center"/>
+                                                <TextBlock x:Name="autoFrameText"
+                                                           Text="AUTO FACE FRAMING (CENTER STAGE)"
+                                                           FontFamily="{StaticResource FontYoyuMono}"
+                                                           FontSize="9.5"
+                                                           FontWeight="Bold"
+                                                           Foreground="{DynamicResource BrushInkPrimary}"
+                                                           VerticalAlignment="Center"/>
+                                            </DockPanel>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="autoFrameBorder" Property="BorderBrush" Value="{DynamicResource BrushBorderActive}"/>
+                                            </Trigger>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="autoFrameBorder" Property="Background" Value="{DynamicResource BrushCtaPrimaryBg}"/>
+                                                <Setter TargetName="autoFrameBorder" Property="BorderBrush" Value="{DynamicResource BrushBorderActive}"/>
+                                                <Setter TargetName="autoFrameLed" Property="Fill" Value="#00B995"/>
+                                                <Setter TargetName="autoFrameText" Property="Foreground" Value="{DynamicResource BrushCtaPrimaryFg}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
                         </StackPanel>
                     </Border>
 
@@ -1321,6 +1657,132 @@
                                     </StackPanel>
                                 </Button>
                             </UniformGrid>
+
+                            <!-- Custom .cube 3D LUT Import Row -->
+                            <Border Margin="0,8,0,0"
+                                    Background="{DynamicResource BrushInputBg}"
+                                    BorderBrush="{DynamicResource BrushBorderPassive}"
+                                    BorderThickness="1"
+                                    CornerRadius="0"
+                                    Padding="6">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Button Grid.Column="0"
+                                            Content="IMPORT .CUBE LUT"
+                                            Style="{StaticResource StudioButtonStyle}"
+                                            Command="{Binding ImportCubeLutCommand}"
+                                            FontFamily="{StaticResource FontYoyuMono}"
+                                            FontSize="9.5"
+                                            Padding="8,4"/>
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding CustomLutDisplayName}"
+                                               FontFamily="{StaticResource FontYoyuMono}"
+                                               FontSize="10"
+                                               Foreground="{DynamicResource BrushInkSecondary}"
+                                               TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center"
+                                               Margin="8,0"/>
+                                    <Button Grid.Column="2"
+                                            Content="×"
+                                            Style="{StaticResource StudioButtonStyle}"
+                                            Command="{Binding ClearCustomLutCommand}"
+                                            FontFamily="{StaticResource FontYoyuMono}"
+                                            FontSize="11"
+                                            Padding="7,2"
+                                            ToolTip="Clear Custom 3D LUT"/>
+                                </Grid>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- CARD 2B: 05B / AI & PORTRAIT FX -->
+                    <Border Background="{DynamicResource BrushCardBg}"
+                            BorderBrush="{DynamicResource BrushBorderPassive}"
+                            BorderThickness="1"
+                            CornerRadius="0"
+                            Padding="14"
+                            Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="05B / AI &amp; PORTRAIT FX"
+                                       FontFamily="{StaticResource FontYoyuPixel}"
+                                       FontSize="10.5"
+                                       FontWeight="Normal"
+                                       Foreground="{DynamicResource BrushInkPrimary}"
+                                       Margin="0,0,0,10"/>
+
+                            <!-- Portrait Blur (Bokeh) -->
+                            <DockPanel Margin="0,0,0,2">
+                                <TextBlock Text="Portrait Blur (Bokeh)" FontSize="11" Foreground="{DynamicResource BrushInkSecondary}"/>
+                                <TextBlock Text="{Binding FilterSettings.BackgroundBlur, Converter={StaticResource FloatDisplay}, ConverterParameter='0'}"
+                                           FontFamily="{StaticResource FontYoyuMono}"
+                                           FontSize="10.5"
+                                           FontWeight="Bold"
+                                           Foreground="{DynamicResource BrushAccentCyan}"
+                                           HorizontalAlignment="Right"/>
+                            </DockPanel>
+                            <Slider Minimum="0" Maximum="100" Value="{Binding FilterSettings.BackgroundBlur, Mode=TwoWay}" IsMoveToPointEnabled="True" SmallChange="1" LargeChange="10"/>
+
+                            <!-- Green Screen (Chroma Key) Toggle -->
+                            <ToggleButton IsChecked="{Binding FilterSettings.ChromaKeyEnabled, Mode=TwoWay}"
+                                          Cursor="Hand"
+                                          Margin="0,6,0,8"
+                                          ToolTip="Enable real-time green screen background removal">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="chromaBorder"
+                                                Background="{DynamicResource BrushInputBg}"
+                                                BorderBrush="{DynamicResource BrushBorderPassive}"
+                                                BorderThickness="1"
+                                                CornerRadius="0"
+                                                Padding="10,7"
+                                                SnapsToDevicePixels="True">
+                                            <DockPanel>
+                                                <Rectangle x:Name="chromaLed"
+                                                           DockPanel.Dock="Left"
+                                                           Width="6"
+                                                           Height="6"
+                                                           Fill="{DynamicResource BrushInkMuted}"
+                                                           Margin="0,0,8,0"
+                                                           VerticalAlignment="Center"/>
+                                                <TextBlock x:Name="chromaText"
+                                                           Text="GREEN SCREEN (CHROMA KEY)"
+                                                           FontFamily="{StaticResource FontYoyuMono}"
+                                                           FontSize="9.5"
+                                                           FontWeight="Bold"
+                                                           Foreground="{DynamicResource BrushInkPrimary}"
+                                                           VerticalAlignment="Center"/>
+                                            </DockPanel>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="chromaBorder" Property="BorderBrush" Value="{DynamicResource BrushBorderActive}"/>
+                                            </Trigger>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="chromaBorder" Property="Background" Value="{DynamicResource BrushCtaPrimaryBg}"/>
+                                                <Setter TargetName="chromaBorder" Property="BorderBrush" Value="{DynamicResource BrushBorderActive}"/>
+                                                <Setter TargetName="chromaLed" Property="Fill" Value="#00B995"/>
+                                                <Setter TargetName="chromaText" Property="Foreground" Value="{DynamicResource BrushCtaPrimaryFg}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <!-- Key Sensitivity -->
+                            <DockPanel Margin="0,0,0,2">
+                                <TextBlock Text="Key Sensitivity" FontSize="11" Foreground="{DynamicResource BrushInkSecondary}"/>
+                                <TextBlock Text="{Binding FilterSettings.ChromaKeyThreshold, Converter={StaticResource FloatDisplay}, ConverterParameter='0'}"
+                                           FontFamily="{StaticResource FontYoyuMono}"
+                                           FontSize="10.5"
+                                           FontWeight="Bold"
+                                           Foreground="{DynamicResource BrushAccentCyan}"
+                                           HorizontalAlignment="Right"/>
+                            </DockPanel>
+                            <Slider Minimum="0" Maximum="100" Value="{Binding FilterSettings.ChromaKeyThreshold, Mode=TwoWay}" IsMoveToPointEnabled="True" SmallChange="1" LargeChange="10" Margin="0,2,0,0"/>
                         </StackPanel>
                     </Border>
 

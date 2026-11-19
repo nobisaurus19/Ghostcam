@@ -13,6 +13,9 @@ public sealed class VideoFrameProcessor
     private byte[]? _scratchBufferA;
     private byte[]? _scratchBufferB;
     private readonly object _bufferLock = new();
+    private float _autoPanX;
+    private float _autoPanY;
+    private float _autoZoom = 1.0f;
 
     /// <summary>
     /// Processes a BGRA32 frame in-place (or into the provided buffer) using settings.
@@ -31,10 +34,31 @@ public sealed class VideoFrameProcessor
         byte[] current = sourceBgra;
         byte[] next = _scratchBufferA!;
 
-        // 1. Zoom and Pan
-        if (settings.Zoom > 1.001f || Math.Abs(settings.PanX) > 0.001f || Math.Abs(settings.PanY) > 0.001f)
+        // 1. Auto Face Framing + Zoom and Pan
+        if (settings.AutoFramingEnabled)
         {
-            ApplyZoomAndPan(current, next, width, height, settings.Zoom, settings.PanX, settings.PanY);
+            ComputeAutoFramingTarget(current, width, height, out float targetPanX, out float targetPanY);
+            _autoPanX += (targetPanX - _autoPanX) * 0.12f;
+            _autoPanY += (targetPanY - _autoPanY) * 0.12f;
+            _autoZoom += (1.28f - _autoZoom) * 0.10f;
+        }
+        else if (_autoZoom > 1.001f || Math.Abs(_autoPanX) > 0.001f || Math.Abs(_autoPanY) > 0.001f)
+        {
+            _autoPanX += (0.0f - _autoPanX) * 0.18f;
+            _autoPanY += (0.0f - _autoPanY) * 0.18f;
+            _autoZoom += (1.0f - _autoZoom) * 0.18f;
+            if (Math.Abs(_autoPanX) < 0.001f) _autoPanX = 0.0f;
+            if (Math.Abs(_autoPanY) < 0.001f) _autoPanY = 0.0f;
+            if (Math.Abs(_autoZoom - 1.0f) < 0.001f) _autoZoom = 1.0f;
+        }
+
+        float effectiveZoom = Math.Clamp(settings.Zoom * _autoZoom, 1.0f, 4.0f);
+        float effectivePanX = Math.Clamp(settings.PanX + _autoPanX, -1.0f, 1.0f);
+        float effectivePanY = Math.Clamp(settings.PanY + _autoPanY, -1.0f, 1.0f);
+
+        if (effectiveZoom > 1.001f || Math.Abs(effectivePanX) > 0.001f || Math.Abs(effectivePanY) > 0.001f)
+        {
+            ApplyZoomAndPan(current, next, width, height, effectiveZoom, effectivePanX, effectivePanY);
             Swap(ref current, ref next);
         }
 
@@ -45,7 +69,21 @@ public sealed class VideoFrameProcessor
             Swap(ref current, ref next);
         }
 
-        // 3. Color Grading, Brightness, Contrast, Saturation, Temperature, Vignette, Presets
+        // 2.5. Portrait Background Blur
+        if (settings.BackgroundBlur > 0.5f)
+        {
+            int blurRadius = Math.Clamp((int)Math.Round((settings.BackgroundBlur / 100.0f) * 14.0f), 2, 14);
+            ApplyOpticalDefocus(current, next, _scratchBufferB!, width, height, blurRadius);
+            BlendPortraitBackgroundBlur(current, next, width, height);
+        }
+
+        // 2.75. Chroma Key Green Screen
+        if (settings.ChromaKeyEnabled)
+        {
+            ApplyChromaKey(current, width, height, settings.ChromaKeyThreshold);
+        }
+
+        // 3. Color Grading, Brightness, Contrast, Saturation, Temperature, Vignette, Presets, Custom LUT
         bool hasColorMods = Math.Abs(settings.Brightness) > 0.01f ||
                            Math.Abs(settings.Contrast) > 0.01f ||
                            Math.Abs(settings.Saturation) > 0.01f ||
@@ -53,6 +91,7 @@ public sealed class VideoFrameProcessor
                            Math.Abs(settings.Tint) > 0.01f ||
                            settings.Vignette > 0.01f ||
                            settings.ColorPreset != StudioColorPreset.None ||
+                           settings.CustomLut != null ||
                            Math.Abs(settings.HardwareIso - 100.0f) > 0.5f ||
                            Math.Abs(settings.HardwareShutter - 60.0f) > 0.5f ||
                            Math.Abs(settings.HardwareWbKelvin - 5400.0f) > 10.0f;
@@ -289,6 +328,7 @@ public sealed class VideoFrameProcessor
         float tintGreen = settings.Tint * 0.45f;
         float vignetteStrength = settings.Vignette / 100.0f;
         StudioColorPreset preset = settings.ColorPreset;
+        CubeLut3D? customLut = settings.CustomLut;
 
         float cx = width * 0.5f;
         float cy = height * 0.5f;
@@ -396,6 +436,12 @@ public sealed class VideoFrameProcessor
                             g = ((g - 128f) * 1.12f) + 128f;
                             b = ((b - 128f) * 1.12f) + 128f;
                             break;
+                    }
+
+                    // 5.5. Custom .cube 3D LUT
+                    if (customLut != null)
+                    {
+                        customLut.Apply(ref r, ref g, ref b);
                     }
 
                     // 6. Vignette
@@ -558,6 +604,185 @@ public sealed class VideoFrameProcessor
                     sumB += pAdd[0] - pRemove[0];
                     sumG += pAdd[1] - pRemove[1];
                     sumR += pAdd[2] - pRemove[2];
+                }
+            });
+        }
+    }
+
+    /// <summary>
+    /// Estimates the subject/face centroid using subsampled YCbCr skin-chroma detection for auto-framing.
+    /// </summary>
+    private static unsafe void ComputeAutoFramingTarget(byte[] bgra, int width, int height, out float targetPanX, out float targetPanY)
+    {
+        const int stridePx = 8;
+        float sumX = 0.0f;
+        float sumY = 0.0f;
+        float sumWeight = 0.0f;
+        float upperCutoffY = height * 0.72f;
+
+        fixed (byte* pBase = bgra)
+        {
+            for (int y = 0; y < height; y += stridePx)
+            {
+                byte* pRow = pBase + (y * width * 4);
+                float weight = y < upperCutoffY ? 1.5f : 0.65f;
+
+                for (int x = 0; x < width; x += stridePx)
+                {
+                    int idx = x * 4;
+                    float b = pRow[idx];
+                    float g = pRow[idx + 1];
+                    float r = pRow[idx + 2];
+
+                    float yLum = (0.299f * r) + (0.587f * g) + (0.114f * b);
+                    if (yLum <= 55.0f)
+                    {
+                        continue;
+                    }
+
+                    float cb = 128.0f - (0.168736f * r) - (0.331264f * g) + (0.5f * b);
+                    float cr = 128.0f + (0.5f * r) - (0.418688f * g) - (0.081312f * b);
+
+                    if (cb >= 77.0f && cb <= 127.0f && cr >= 133.0f && cr <= 173.0f)
+                    {
+                        sumX += x * weight;
+                        sumY += y * weight;
+                        sumWeight += weight;
+                    }
+                }
+            }
+        }
+
+        if (sumWeight < 10.0f)
+        {
+            targetPanX = 0.0f;
+            targetPanY = 0.0f;
+            return;
+        }
+
+        float avgX = sumX / sumWeight;
+        float avgY = sumY / sumWeight;
+
+        float normX = ((avgX / width) - 0.5f) * 2.0f;
+        float normY = ((avgY / height) - 0.5f) * 2.0f;
+
+        targetPanX = Math.Clamp(normX * 1.8f, -1.0f, 1.0f);
+        targetPanY = Math.Clamp(normY * 1.8f, -1.0f, 1.0f);
+    }
+
+    /// <summary>
+    /// Blends sharp foreground subject with blurred background using an elliptical portrait mask and skin protection.
+    /// Writes the blended result back into the sharp buffer.
+    /// </summary>
+    private static unsafe void BlendPortraitBackgroundBlur(byte[] sharp, byte[] blurred, int width, int height)
+    {
+        float cx = width * 0.5f;
+        float cy = height * 0.58f;
+        float invRx = 1.0f / Math.Max(1.0f, width * 0.34f);
+        float invRy = 1.0f / Math.Max(1.0f, height * 0.48f);
+
+        fixed (byte* pSharpBase = sharp)
+        fixed (byte* pBlurBase = blurred)
+        {
+            nint sharpPtr = (nint)pSharpBase;
+            nint blurPtr = (nint)pBlurBase;
+
+            Parallel.For(0, height, y =>
+            {
+                byte* pSharpRow = (byte*)sharpPtr + (y * width * 4);
+                byte* pBlurRow = (byte*)blurPtr + (y * width * 4);
+
+                float dy = (y - cy) * invRy;
+                float dySq = dy * dy;
+
+                for (int x = 0; x < width; x++)
+                {
+                    int idx = x * 4;
+                    float dx = (x - cx) * invRx;
+                    float dist = MathF.Sqrt((dx * dx) + dySq);
+
+                    float t = Math.Clamp((dist - 0.65f) / 0.60f, 0.0f, 1.0f);
+                    float mask = 1.0f - (t * t * (3.0f - (2.0f * t)));
+
+                    float sb = pSharpRow[idx];
+                    float sg = pSharpRow[idx + 1];
+                    float sr = pSharpRow[idx + 2];
+
+                    if (dist < 1.55f && mask < 0.92f)
+                    {
+                        float yLum = (0.299f * sr) + (0.587f * sg) + (0.114f * sb);
+                        if (yLum > 50.0f)
+                        {
+                            float cb = 128.0f - (0.168736f * sr) - (0.331264f * sg) + (0.5f * sb);
+                            float cr = 128.0f + (0.5f * sr) - (0.418688f * sg) - (0.081312f * sb);
+
+                            if (cb >= 75.0f && cb <= 129.0f && cr >= 131.0f && cr <= 175.0f)
+                            {
+                                float skinFalloff = 1.0f - Math.Clamp((dist - 1.15f) / 0.40f, 0.0f, 1.0f);
+                                mask = MathF.Max(mask, 0.92f * skinFalloff);
+                            }
+                        }
+                    }
+
+                    if (mask < 0.999f)
+                    {
+                        float bb = pBlurRow[idx];
+                        float bg = pBlurRow[idx + 1];
+                        float br = pBlurRow[idx + 2];
+
+                        pSharpRow[idx] = (byte)(bb + ((sb - bb) * mask));
+                        pSharpRow[idx + 1] = (byte)(bg + ((sg - bg) * mask));
+                        pSharpRow[idx + 2] = (byte)(br + ((sr - br) * mask));
+                        pSharpRow[idx + 3] = 255;
+                    }
+                }
+            });
+        }
+    }
+
+    /// <summary>
+    /// Keys out green screen dominance with edge spill suppression and composites onto a #14161D dark studio backdrop.
+    /// </summary>
+    private static unsafe void ApplyChromaKey(byte[] bgra, int width, int height, float threshold)
+    {
+        float minDom = Math.Clamp(52.0f - (threshold * 0.48f), 4.0f, 52.0f);
+        const float invSoftness = 1.0f / 24.0f;
+        const float bgR = 20.0f;
+        const float bgG = 22.0f;
+        const float bgB = 29.0f;
+
+        fixed (byte* pBase = bgra)
+        {
+            nint ptr = (nint)pBase;
+
+            Parallel.For(0, height, y =>
+            {
+                byte* pRow = (byte*)ptr + (y * width * 4);
+
+                for (int x = 0; x < width; x++)
+                {
+                    int idx = x * 4;
+                    float b = pRow[idx];
+                    float g = pRow[idx + 1];
+                    float r = pRow[idx + 2];
+
+                    float maxRb = MathF.Max(r, b);
+                    float greenDom = g - maxRb;
+
+                    if (greenDom > minDom)
+                    {
+                        float keyAmount = Math.Clamp((greenDom - minDom) * invSoftness, 0.0f, 1.0f);
+                        keyAmount = keyAmount * keyAmount * (3.0f - (2.0f * keyAmount));
+                        float fgAlpha = 1.0f - keyAmount;
+
+                        float spillReduce = Math.Clamp(keyAmount * 1.35f, 0.0f, 1.0f);
+                        float fgG = g - ((g - maxRb) * spillReduce);
+
+                        pRow[idx] = (byte)Math.Clamp((int)((b * fgAlpha) + (bgB * keyAmount)), 0, 255);
+                        pRow[idx + 1] = (byte)Math.Clamp((int)((fgG * fgAlpha) + (bgG * keyAmount)), 0, 255);
+                        pRow[idx + 2] = (byte)Math.Clamp((int)((r * fgAlpha) + (bgR * keyAmount)), 0, 255);
+                        pRow[idx + 3] = 255;
+                    }
                 }
             });
         }

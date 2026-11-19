@@ -27,23 +27,25 @@
 
 - **📱 60 FPS / 30 FPS Wireless WebCam via Safari & Chrome (ไม่ต้องลงแอปในมือถือ)**
   - Scan the QR code directly with **Safari (iPhone)** or **Chrome (Android)** over local Wi-Fi (port `9443` HTTPS / `9442` HTTP with WebSocket binary streaming).
-  - Supports **4K UHD (`3840x2160`)**, **Full HD (`1920x1080`)**, and **HD (`1280x720`)** at **60 FPS** or **30 FPS** — all unlocked with zero watermarks.
+  - Supports **WebCodecs Hardware H.264 (`H264` toggle)** and **JPEG** streaming across **4K UHD (`3840x2160`)**, **Full HD (`1920x1080`)**, and **HD (`1280x720`)** at **60 FPS** or **30 FPS** — all unlocked with zero watermarks.
   - Also includes a built-in **60 FPS Synthetic Test Camera** and **USB Tunnel** support (`usbmuxd` for iOS / `adb` for Android).
+
+- **🎙️ Wireless Mobile Microphone & 1-Bit Pixel VU Meter**
+  - Stream microphone audio directly from your phone (`🎙️ ไมค์`) over WebSocket (`24 kHz` 16-bit PCM) with optional PC **MIC** audio monitoring and a live **5-bar 1-bit pixel VU meter**.
 
 - **🎥 Native Windows 11 Media Foundation Virtual Camera**
   - Outputs directly as **`Ghost Cam (Windows Virtual Camera)`** (`GhostCamVirtualCamera.dll` / `GhostCam Virtual Camera`) supporting both **NV12** and **YUY2** at **60 FPS** and **30 FPS**.
   - Works seamlessly across **Discord**, **OBS Studio**, **Zoom**, **Microsoft Teams**, and **Google Meet** via shared memory (`C:\ProgramData\Ghostcam\frame.shm`) and low-latency event sync.
 
-- **❄️ iPhone Thermal Cool Mode & Lens Switcher (ลดความร้อนและประหยัดแบตเตอรี่)**
-  - **`❄️ ลดร้อน: ON`** thermal cool mode on the mobile web controller to reduce heat during long streams.
-  - **OLED Blackout Screen Saver (`🌙 พักหน้าจอ`)** dims/blacks out the phone display while continuing high-speed video transmission.
-  - **Multi-Lens Switcher**: switch between **`0.5x` (Ultra-Wide)**, **`1x` (Wide)**, **`2x` (Telephoto)**, and **`Selfie` (Front)** with automatic fallback zoom support.
+- **❄️ iPhone Thermal Cool Mode & Smart Multi-Lens + 2x Crop Fallback**
+  - **`❄️ ลดร้อน: ON`** thermal cool mode reduces phone heat during long streams, while **OLED Blackout (`🌙 พักหน้าจอ`)** blacks out the phone screen without stopping video transmission.
+  - **Smart Multi-Lens Switcher**: **`0.5x`**, **`1x`**, **`2x`**, **`Selfie`** with physical camera detection and automatic **2x center sensor crop fallback** for single-lens phones.
 
-- **🎛️ Real-Time ISP & Studio Controls**
-  - **Hardware Exposure**: `Sensor ISO`, `Shutter Speed`, `White Balance (Kelvin)`, and `Manual Focus` + Wake/Sleep & Torch toggle.
-  - **Framing & Transform**: Digital `Zoom` (`1.0x–4.0x`), `Pan X / Pan Y`, `Mirror`, `Rotate 90°`, `HUD` overlay toggle, and instant `Snapshot`.
-  - **LUT Color Presets**: `NATURAL`, `STUDIO WARM`, `TEAL & ORANGE`, `CYBERPUNK`, `NOIR MONO`, and `VIVID POP`.
-  - **Fine Image Adjustments**: `Brightness`, `Contrast`, `Saturation`, `Temperature`, `Tint`, `Sharpness`, and `Vignette`.
+- **🎛️ Real-Time AI & ISP Studio Controls + Recorder + Profiles**
+  - **AI & Portrait FX**: **Auto Face Framing (Center Stage)**, **Portrait Background Blur (`Bokeh`)**, and **Green Screen (`Chroma Key`)**.
+  - **LUTs & `.cube` Import**: 6 built-in presets (`NATURAL`, `STUDIO WARM`, `TEAL & ORANGE`, `CYBERPUNK`, `NOIR MONO`, `VIVID POP`) plus **`IMPORT .CUBE LUT`** for custom 3D LUTs.
+  - **Hardware Exposure & Fine Adjustments**: `Sensor ISO`, `Shutter Speed`, `White Balance (Kelvin)`, `Manual Focus`, `Zoom`/`Pan`/`Mirror`/`Rotate 90°`/`HUD`, plus `Brightness`, `Contrast`, `Saturation`, `Temperature`, `Tint`, `Sharpness`, and `Vignette`.
+  - **Capture & Workflow**: Instant PNG **`SNAPSHOT`**, built-in **`● REC`** MJPEG `.avi` video recorder (`Pictures\Ghostcam`), automatic settings persistence with **`P1 / P2 / P3` custom profiles**, and **Minimize to System Tray (`TRAY`)**.
 
 - **🖤🤍 Monochrome Light / Dark 8px Grid UI (YOYU Inspired)**
   - Clean architectural 8px-grid interface with instant **Light / Dark Theme** toggle, crisp telemetry strip, and custom 1-bit pixel-art ghost animations.

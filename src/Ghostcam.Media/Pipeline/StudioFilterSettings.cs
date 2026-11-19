@@ -40,6 +40,12 @@ public sealed class StudioFilterSettings : INotifyPropertyChanged
     private float _hardwareShutter = 60.0f;
     private float _hardwareWbKelvin = 5400.0f;
     private float _hardwareFocus = 0.5f;
+    private float _backgroundBlur = 0.0f;
+    private bool _chromaKeyEnabled = false;
+    private float _chromaKeyThreshold = 40.0f;
+    private bool _autoFramingEnabled = false;
+    private CubeLut3D? _customLut = null;
+    private string _customLutName = "None";
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -212,6 +218,60 @@ public sealed class StudioFilterSettings : INotifyPropertyChanged
     }
 
     /// <summary>
+    /// Portrait background blur strength: 0.0 to 100.0.
+    /// </summary>
+    public float BackgroundBlur
+    {
+        get => _backgroundBlur;
+        set => SetField(ref _backgroundBlur, Math.Clamp(value, 0.0f, 100.0f));
+    }
+
+    /// <summary>
+    /// Enables real-time green screen chroma key replacement.
+    /// </summary>
+    public bool ChromaKeyEnabled
+    {
+        get => _chromaKeyEnabled;
+        set => SetField(ref _chromaKeyEnabled, value);
+    }
+
+    /// <summary>
+    /// Chroma key green sensitivity threshold: 0.0 to 100.0 (default 40.0).
+    /// </summary>
+    public float ChromaKeyThreshold
+    {
+        get => _chromaKeyThreshold;
+        set => SetField(ref _chromaKeyThreshold, Math.Clamp(value, 0.0f, 100.0f));
+    }
+
+    /// <summary>
+    /// Enables automatic subject/face tracking framing.
+    /// </summary>
+    public bool AutoFramingEnabled
+    {
+        get => _autoFramingEnabled;
+        set => SetField(ref _autoFramingEnabled, value);
+    }
+
+    /// <summary>
+    /// Optional custom Adobe .cube 3D LUT applied during color grading.
+    /// </summary>
+    public CubeLut3D? CustomLut
+    {
+        get => _customLut;
+        set => SetField(ref _customLut, value);
+    }
+
+    /// <summary>
+    /// Display name of the currently active custom 3D LUT ("None" when unset).
+    /// </summary>
+    public string CustomLutName
+    {
+        get => _customLutName;
+        set => SetField(ref _customLutName, string.IsNullOrWhiteSpace(value) ? "None" : value);
+    }
+
+    /// <summary>
     /// Resets all values to default neutral settings.
     /// </summary>
     public void Reset()
@@ -234,6 +294,12 @@ public sealed class StudioFilterSettings : INotifyPropertyChanged
         HardwareShutter = 60.0f;
         HardwareWbKelvin = 5400.0f;
         HardwareFocus = 0.5f;
+        BackgroundBlur = 0.0f;
+        ChromaKeyEnabled = false;
+        ChromaKeyThreshold = 40.0f;
+        AutoFramingEnabled = false;
+        CustomLut = null;
+        CustomLutName = "None";
     }
 
     /// <summary>
@@ -260,7 +326,13 @@ public sealed class StudioFilterSettings : INotifyPropertyChanged
             _hardwareIso = this._hardwareIso,
             _hardwareShutter = this._hardwareShutter,
             _hardwareWbKelvin = this._hardwareWbKelvin,
-            _hardwareFocus = this._hardwareFocus
+            _hardwareFocus = this._hardwareFocus,
+            _backgroundBlur = this._backgroundBlur,
+            _chromaKeyEnabled = this._chromaKeyEnabled,
+            _chromaKeyThreshold = this._chromaKeyThreshold,
+            _autoFramingEnabled = this._autoFramingEnabled,
+            _customLut = this._customLut,
+            _customLutName = this._customLutName
         };
     }
 

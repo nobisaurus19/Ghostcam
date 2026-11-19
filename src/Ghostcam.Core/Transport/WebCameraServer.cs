@@ -37,6 +37,8 @@ public sealed class WebCameraServer : IDisposable
     private int _dispatchProcessing = 0;
 
     public event Action<byte[]>? JpegFrameReceived;
+    public event Action<byte[]>? H264ChunkReceived;
+    public event Action<byte[]>? AudioPacketReceived;
     public event Action<string>? LogMessage;
     public event Action<string>? ClientConnected;
     public event Action<string>? ClientTelemetryReceived;
@@ -56,6 +58,7 @@ public sealed class WebCameraServer : IDisposable
     public int DesiredFps { get; private set; } = 60;
     public bool TorchEnabled { get; private set; } = false;
     public bool IsStreamPaused { get; private set; } = false;
+    public bool MicEnabled { get; private set; } = false;
     public double DesiredIso { get; private set; } = 100;
     public double DesiredShutter { get; private set; } = 60;
     public double DesiredWb { get; private set; } = 5400;
@@ -69,7 +72,7 @@ public sealed class WebCameraServer : IDisposable
     {
         lock (_stateLock)
         {
-            return $"{{\"v\":{CommandVersion},\"lens\":\"{DesiredLens}\",\"w\":{DesiredWidth},\"h\":{DesiredHeight},\"fps\":{DesiredFps},\"torch\":{(TorchEnabled ? "true" : "false")},\"paused\":{(IsStreamPaused ? "true" : "false")},\"iso\":{DesiredIso.ToString("0", CultureInfo.InvariantCulture)},\"shutter\":{DesiredShutter.ToString("0", CultureInfo.InvariantCulture)},\"wb\":{DesiredWb.ToString("0", CultureInfo.InvariantCulture)},\"focus\":{DesiredFocus.ToString("0.##", CultureInfo.InvariantCulture)}}}";
+            return $"{{\"v\":{CommandVersion},\"lens\":\"{DesiredLens}\",\"w\":{DesiredWidth},\"h\":{DesiredHeight},\"fps\":{DesiredFps},\"torch\":{(TorchEnabled ? "true" : "false")},\"paused\":{(IsStreamPaused ? "true" : "false")},\"mic\":{(MicEnabled ? "true" : "false")},\"iso\":{DesiredIso.ToString("0", CultureInfo.InvariantCulture)},\"shutter\":{DesiredShutter.ToString("0", CultureInfo.InvariantCulture)},\"wb\":{DesiredWb.ToString("0", CultureInfo.InvariantCulture)},\"focus\":{DesiredFocus.ToString("0.##", CultureInfo.InvariantCulture)}}}";
         }
     }
 
@@ -84,6 +87,7 @@ public sealed class WebCameraServer : IDisposable
         double? shutter = null,
         double? wb = null,
         double? focus = null,
+        bool? mic = null,
         bool notifyClient = true)
     {
         bool changed = false;
@@ -95,6 +99,7 @@ public sealed class WebCameraServer : IDisposable
             if (fps.HasValue && fps.Value > 0 && fps.Value != DesiredFps) { DesiredFps = fps.Value; changed = true; }
             if (torch.HasValue && torch.Value != TorchEnabled) { TorchEnabled = torch.Value; changed = true; }
             if (paused.HasValue && paused.Value != IsStreamPaused) { IsStreamPaused = paused.Value; changed = true; }
+            if (mic.HasValue && mic.Value != MicEnabled) { MicEnabled = mic.Value; changed = true; }
             if (iso.HasValue && Math.Abs(iso.Value - DesiredIso) > 0.001) { DesiredIso = iso.Value; changed = true; }
             if (shutter.HasValue && Math.Abs(shutter.Value - DesiredShutter) > 0.001) { DesiredShutter = shutter.Value; changed = true; }
             if (wb.HasValue && Math.Abs(wb.Value - DesiredWb) > 0.001) { DesiredWb = wb.Value; changed = true; }
@@ -103,7 +108,7 @@ public sealed class WebCameraServer : IDisposable
             if (changed)
             {
                 CommandVersion++;
-                LogMessage?.Invoke($"[WebCam] Desired state updated (v{CommandVersion}): lens={DesiredLens}, {DesiredWidth}x{DesiredHeight}@{DesiredFps}fps, torch={TorchEnabled}, paused={IsStreamPaused}, iso={DesiredIso:F0}, shutter={DesiredShutter:F0}, wb={DesiredWb:F0}, focus={DesiredFocus:F2}");
+                LogMessage?.Invoke($"[WebCam] Desired state updated (v{CommandVersion}): lens={DesiredLens}, {DesiredWidth}x{DesiredHeight}@{DesiredFps}fps, torch={TorchEnabled}, paused={IsStreamPaused}, mic={MicEnabled}, iso={DesiredIso:F0}, shutter={DesiredShutter:F0}, wb={DesiredWb:F0}, focus={DesiredFocus:F2}");
             }
         }
 
@@ -113,7 +118,7 @@ public sealed class WebCameraServer : IDisposable
         }
     }
 
-    public void ApplyClientPreferences(int? width = null, int? height = null, int? fps = null, string? lens = null)
+    public void ApplyClientPreferences(int? width = null, int? height = null, int? fps = null, string? lens = null, bool? mic = null)
     {
         lock (_stateLock)
         {
@@ -121,7 +126,8 @@ public sealed class WebCameraServer : IDisposable
             if (height.HasValue && height.Value > 0) DesiredHeight = height.Value;
             if (fps.HasValue && fps.Value > 0) DesiredFps = fps.Value;
             if (!string.IsNullOrEmpty(lens)) DesiredLens = lens;
-            LogMessage?.Invoke($"[WebCam] Phone applied preferences: lens={DesiredLens}, {DesiredWidth}x{DesiredHeight}@{DesiredFps}fps");
+            if (mic.HasValue) MicEnabled = mic.Value;
+            LogMessage?.Invoke($"[WebCam] Phone applied preferences: lens={DesiredLens}, {DesiredWidth}x{DesiredHeight}@{DesiredFps}fps, mic={MicEnabled}");
         }
     }
 
@@ -473,12 +479,34 @@ public sealed class WebCameraServer : IDisposable
                             {
                                 if (messageBytes.Length > 0)
                                 {
-                                    long count = Interlocked.Increment(ref _framesLogged);
-                                    if (count <= 5 || count % 150 == 0)
+                                    if (messageBytes.Length > 4 &&
+                                        messageBytes[0] == (byte)'A' &&
+                                        messageBytes[1] == (byte)'U' &&
+                                        messageBytes[2] == (byte)'D' &&
+                                        messageBytes[3] == (byte)'0')
                                     {
-                                        LogMessage?.Invoke($"[WebCam] WS JPEG frame #{count} ({messageBytes.Length} bytes) from {remoteEp}");
+                                        byte[] pcm = messageBytes[4..];
+                                        AudioPacketReceived?.Invoke(pcm);
                                     }
-                                    DispatchLatestFrame(messageBytes);
+                                    else if ((messageBytes.Length >= 4 && messageBytes[0] == 0 && messageBytes[1] == 0 && messageBytes[2] == 0 && messageBytes[3] == 1) ||
+                                             (messageBytes.Length >= 3 && messageBytes[0] == 0 && messageBytes[1] == 0 && messageBytes[2] == 1))
+                                    {
+                                        long count = Interlocked.Increment(ref _framesLogged);
+                                        if (count <= 5 || count % 150 == 0)
+                                        {
+                                            LogMessage?.Invoke($"[WebCam] WS H264 chunk #{count} ({messageBytes.Length} bytes) from {remoteEp}");
+                                        }
+                                        H264ChunkReceived?.Invoke(messageBytes);
+                                    }
+                                    else
+                                    {
+                                        long count = Interlocked.Increment(ref _framesLogged);
+                                        if (count <= 5 || count % 150 == 0)
+                                        {
+                                            LogMessage?.Invoke($"[WebCam] WS JPEG frame #{count} ({messageBytes.Length} bytes) from {remoteEp}");
+                                        }
+                                        DispatchLatestFrame(messageBytes);
+                                    }
                                 }
                             }
                             else if (result.MessageType == WebSocketMessageType.Text)
@@ -494,7 +522,8 @@ public sealed class WebCameraServer : IDisposable
                                         int? h = doc.RootElement.TryGetProperty("h", out var hp) && hp.TryGetInt32(out int hi) ? hi : null;
                                         int? fps = doc.RootElement.TryGetProperty("fps", out var fp) && fp.TryGetInt32(out int fi) ? fi : null;
                                         string? lens = doc.RootElement.TryGetProperty("lens", out var lp) ? lp.GetString() : null;
-                                        ApplyClientPreferences(w, h, fps, lens);
+                                        bool? mic = doc.RootElement.TryGetProperty("mic", out var mp) && (mp.ValueKind == JsonValueKind.True || mp.ValueKind == JsonValueKind.False) ? mp.GetBoolean() : null;
+                                        ApplyClientPreferences(w, h, fps, lens, mic);
                                     }
                                 }
                                 catch { }
@@ -917,6 +946,8 @@ button:active { transform: scale(0.96); opacity: 0.88; }
 .btn-cool { background: var(--cta-bg); border-color: var(--cta-bg); color: var(--cta-fg); }
 .btn-cool.off { background: var(--input); border-color: var(--border); color: var(--muted); }
 .btn-torch.active { background: var(--yellow); border-color: #000000; color: #000000; }
+#btnCodec.active { background: var(--cta-bg); border-color: var(--border-strong); color: var(--cta-fg); }
+#btnMic.active { background: var(--green); border-color: #000000; color: #000000; }
 .start-overlay { position: absolute; inset: 0; background-color: var(--bg); background-image: linear-gradient(to right, var(--grid) 1px, transparent 1px), linear-gradient(to bottom, var(--grid) 1px, transparent 1px); background-size: 8px 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 80; padding: 24px; text-align: center; }
 .start-card { max-width: 340px; width: 100%; background: var(--card); border-radius: 0; padding: 28px 22px; border: 1px solid var(--border-strong); color: var(--ink); }
 .start-icon { display: flex; align-items: center; justify-content: center; color: var(--ink); margin-bottom: 14px; }
@@ -966,6 +997,7 @@ button:active { transform: scale(0.96); opacity: 0.88; }
   <div class=""header-actions"">
     <button id=""btnTheme"" class=""btn-mini"" title=""สลับธีม Light / Dark"">◐</button>
     <button id=""btnCool"" class=""btn-cool"" title=""ลดความร้อนและประหยัดพลังงาน iPhone"">❄️ ลดร้อน: ON</button>
+    <button id=""btnCodec"" class=""btn-mini"" title=""สลับโหมดส่งภาพ JPEG / H.264"">JPEG</button>
     <button id=""btnOled"" class=""btn-oled"" title=""ดับหน้าจอมืดประหยัดแบตเตอรี่"">🌙 พักหน้าจอ</button>
     <div class=""badge"" id=""statusBadge"">● READY</div>
   </div>
@@ -1013,6 +1045,7 @@ button:active { transform: scale(0.96); opacity: 0.88; }
   <button id=""btnTorch"" class=""btn-torch"">🔦 ไฟ</button>
   <button id=""btnRes"">📺 720p</button>
   <button id=""btnQuality"" style=""background:var(--cta-bg);color:var(--cta-fg);border-color:var(--border-strong);"">⚡ 60 FPS</button>
+  <button id=""btnMic"">🎙️ ไมค์</button>
   <button id=""btnFs"">⛶ เต็มจอ</button>
 </div>
 
@@ -1042,6 +1075,23 @@ let activeFps = '0.0';
 
 let isRestartingCamera = false;
 let pendingRestart = false;
+let softwareCropZoom = 1.0;
+let videoDeviceList = [];
+let activePhysicalLens = null;
+
+let useWebCodecs = false;
+let videoEncoder = null;
+let encoderConfigKey = '';
+let encoderInitPromise = null;
+let h264FrameIndex = 0;
+let h264Description = null;
+
+let micActive = false;
+let micStream = null;
+let audioCtx = null;
+let micSourceNode = null;
+let micProcessorNode = null;
+let micGainNode = null;
 
 let videoEl = document.getElementById('v');
 let canvasEl = document.getElementById('c');
@@ -1061,7 +1111,31 @@ let pauseBanner = document.getElementById('pauseBanner');
 let oledOverlay = document.getElementById('oledOverlay');
 let btnCool = document.getElementById('btnCool');
 let btnTorch = document.getElementById('btnTorch');
+let btnCodec = document.getElementById('btnCodec');
+let btnMic = document.getElementById('btnMic');
 let currentTrack = null;
+
+if (btnCodec && typeof VideoEncoder === 'undefined') {
+  btnCodec.style.display = 'none';
+}
+
+function findPhysicalLensDeviceId(lens) {
+  if (!videoDeviceList || videoDeviceList.length === 0) return null;
+  if (lens !== 'back-ultra' && lens !== 'back-tele') return null;
+
+  for (const dev of videoDeviceList) {
+    const label = (dev.label || '').toLowerCase();
+    if (!label) continue;
+    if (label.includes('front') || label.includes('selfie') || label.includes('user')) continue;
+    if (lens === 'back-ultra' && (/ultra|0\.5x?/.test(label))) {
+      return dev.deviceId;
+    }
+    if (lens === 'back-tele' && (/tele|telephoto|2x|3x|5x|periscope/.test(label))) {
+      return dev.deviceId;
+    }
+  }
+  return null;
+}
 
 let ws = null;
 let wsReconnectTimer = null;
@@ -1102,28 +1176,64 @@ async function startCamera() {
 
     const isFront = (currentLens === 'front');
     currentFacing = isFront ? 'user' : 'environment';
+    activePhysicalLens = null;
+    softwareCropZoom = 1.0;
+    videoEl.style.transform = '';
 
+    const matchedId = findPhysicalLensDeviceId(currentLens);
     let constraints = {
       audio: false,
-      video: {
-        facingMode: currentFacing,
-        width: { ideal: targetWidth },
-        height: { ideal: targetHeight },
-        frameRate: { ideal: targetFps }
-      }
+      video: matchedId
+        ? {
+            deviceId: { exact: matchedId },
+            width: { ideal: targetWidth },
+            height: { ideal: targetHeight },
+            frameRate: { ideal: targetFps }
+          }
+        : {
+            facingMode: currentFacing,
+            width: { ideal: targetWidth },
+            height: { ideal: targetHeight },
+            frameRate: { ideal: targetFps }
+          }
     };
 
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia(constraints);
+      if (matchedId) activePhysicalLens = currentLens;
     } catch (err) {
-      if (targetFps > 30 || targetWidth > 1920) {
+      if (matchedId) {
+        constraints.video = {
+          facingMode: currentFacing,
+          width: { ideal: targetWidth },
+          height: { ideal: targetHeight },
+          frameRate: { ideal: targetFps }
+        };
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (err2) {
+          if (targetFps > 30 || targetWidth > 1920) {
+            constraints.video.frameRate = { ideal: 30 };
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+          } else {
+            throw err2;
+          }
+        }
+      } else if (targetFps > 30 || targetWidth > 1920) {
         constraints.video.frameRate = { ideal: 30 };
         stream = await navigator.mediaDevices.getUserMedia(constraints);
       } else {
         throw err;
       }
     }
+
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+        const devs = await navigator.mediaDevices.enumerateDevices();
+        videoDeviceList = devs.filter(d => d.kind === 'videoinput');
+      }
+    } catch (e) {}
 
     let track = stream.getVideoTracks()[0];
     let s = track.getSettings ? track.getSettings() : {};
@@ -1135,12 +1245,11 @@ async function startCamera() {
         stream.getTracks().forEach(t => t.stop());
         const retryConstraints = {
           audio: false,
-          video: {
-            facingMode: currentFacing,
+          video: Object.assign({}, constraints.video, {
             width: { ideal: 3840 },
             height: { ideal: 2160 },
             frameRate: { ideal: 30 }
-          }
+          })
         };
         const retryStream = await navigator.mediaDevices.getUserMedia(retryConstraints);
         const retryTrack = retryStream.getVideoTracks()[0];
@@ -1208,14 +1317,39 @@ async function startCamera() {
 }
 
 function applyLensZoom(lens) {
-  if (!currentTrack || !currentTrack.getCapabilities) return;
+  softwareCropZoom = 1.0;
+  videoEl.style.transform = '';
+  if (!currentTrack || !currentTrack.getCapabilities) {
+    if (lens === 'back-tele' && activePhysicalLens !== 'back-tele') {
+      softwareCropZoom = 2.0;
+      videoEl.style.transform = 'scale(2)';
+    }
+    return;
+  }
   const caps = currentTrack.getCapabilities();
+  if (lens === 'back-tele') {
+    if (activePhysicalLens === 'back-tele') {
+      return;
+    }
+    if (caps.zoom && caps.zoom.max >= 2.0) {
+      currentTrack.applyConstraints({
+        advanced: [{ zoom: 2.0 }]
+      }).catch(() => {});
+    } else if (caps.zoom && caps.zoom.max >= 1.5) {
+      currentTrack.applyConstraints({
+        advanced: [{ zoom: caps.zoom.max }]
+      }).catch(() => {});
+    } else {
+      softwareCropZoom = 2.0;
+      videoEl.style.transform = 'scale(2)';
+    }
+    return;
+  }
   if (caps.zoom) {
     let zoomVal = 1.0;
-    if (lens === 'back-ultra') zoomVal = caps.zoom.min || 0.5;
-    else if (lens === 'back-tele') zoomVal = Math.min(2.0, caps.zoom.max || 2.0);
-    else zoomVal = 1.0;
-
+    if (lens === 'back-ultra' && activePhysicalLens !== 'back-ultra') {
+      zoomVal = caps.zoom.min || 0.5;
+    }
     currentTrack.applyConstraints({
       advanced: [{ zoom: zoomVal }]
     }).catch(() => {});
@@ -1386,6 +1520,10 @@ function handleServerCommand(cmd) {
     applyTorch(cmd.torch);
   }
 
+  if (typeof cmd.mic === 'boolean' && cmd.mic !== micActive) {
+    setMicState(cmd.mic);
+  }
+
   if (currentTrack && typeof currentTrack.applyConstraints === 'function' &&
       (cmd.iso !== undefined || cmd.shutter !== undefined || cmd.wb !== undefined || cmd.focus !== undefined)) {
     applyHardwareConstraints(cmd);
@@ -1486,15 +1624,192 @@ function scheduleNextFrame(gen) {
   }
 }
 
+function updateCodecButtonUI(customTitle) {
+  if (!btnCodec) return;
+  if (useWebCodecs) {
+    btnCodec.textContent = 'H264';
+    btnCodec.classList.add('active');
+    btnCodec.title = customTitle || 'กำลังส่งภาพแบบ H.264 WebCodecs (แตะเพื่อสลับเป็น JPEG)';
+  } else {
+    btnCodec.textContent = 'JPEG';
+    btnCodec.classList.remove('active');
+    btnCodec.title = customTitle || 'สลับโหมดส่งภาพ JPEG / H.264';
+  }
+}
+
+function closeVideoEncoder() {
+  encoderConfigKey = '';
+  h264Description = null;
+  h264FrameIndex = 0;
+  if (videoEncoder) {
+    try {
+      if (videoEncoder.state !== 'closed') videoEncoder.close();
+    } catch (e) {}
+    videoEncoder = null;
+  }
+}
+
+function startsWithAnnexB(u8) {
+  return (u8.length >= 4 && u8[0] === 0 && u8[1] === 0 && u8[2] === 0 && u8[3] === 1)
+      || (u8.length >= 3 && u8[0] === 0 && u8[1] === 0 && u8[2] === 1);
+}
+
+function startsWithAnnexBSps(u8) {
+  if (u8.length >= 5 && u8[0] === 0 && u8[1] === 0 && u8[2] === 0 && u8[3] === 1) {
+    return (u8[4] & 0x1f) === 7;
+  }
+  if (u8.length >= 4 && u8[0] === 0 && u8[1] === 0 && u8[2] === 1) {
+    return (u8[3] & 0x1f) === 7;
+  }
+  return false;
+}
+
+function extractAnnexBPrefix(desc) {
+  if (!desc) return null;
+  const raw = (desc instanceof Uint8Array) ? desc : new Uint8Array(desc);
+  if (raw.length === 0) return null;
+  if (startsWithAnnexB(raw)) return raw;
+  if (raw[0] === 1 && raw.length >= 8) {
+    const parts = [];
+    let total = 0;
+    let offset = 5;
+    const numSps = raw[offset++] & 0x1f;
+    for (let i = 0; i < numSps && offset + 2 <= raw.length; i++) {
+      const len = (raw[offset] << 8) | raw[offset + 1];
+      offset += 2;
+      if (offset + len <= raw.length) {
+        parts.push(raw.subarray(offset, offset + len));
+        total += 4 + len;
+      }
+      offset += len;
+    }
+    if (offset < raw.length) {
+      const numPps = raw[offset++];
+      for (let i = 0; i < numPps && offset + 2 <= raw.length; i++) {
+        const len = (raw[offset] << 8) | raw[offset + 1];
+        offset += 2;
+        if (offset + len <= raw.length) {
+          parts.push(raw.subarray(offset, offset + len));
+          total += 4 + len;
+        }
+        offset += len;
+      }
+    }
+    if (total > 0) {
+      const out = new Uint8Array(total);
+      let p = 0;
+      for (const nalu of parts) {
+        out[p++] = 0; out[p++] = 0; out[p++] = 0; out[p++] = 1;
+        out.set(nalu, p);
+        p += nalu.length;
+      }
+      return out;
+    }
+  }
+  return null;
+}
+
+function ensureVideoEncoder(w, h) {
+  if (typeof VideoEncoder === 'undefined') {
+    useWebCodecs = false;
+    updateCodecButtonUI('เบราว์เซอร์ไม่รองรับ WebCodecs — ใช้ JPEG');
+    return null;
+  }
+  const key = `${w}x${h}@${targetFps}`;
+  if (videoEncoder && videoEncoder.state === 'configured' && encoderConfigKey === key) {
+    return Promise.resolve(videoEncoder);
+  }
+  if (encoderInitPromise) return encoderInitPromise;
+
+  closeVideoEncoder();
+  const bitrate = w >= 3840 ? 12000000 : (w >= 1920 ? 5000000 : 2500000);
+  const candidates = ['avc1.42002a', 'avc1.42001f'];
+
+  encoderInitPromise = (async () => {
+    try {
+      let chosenConfig = null;
+      for (const codec of candidates) {
+        const cfg = {
+          codec: codec,
+          width: w,
+          height: h,
+          framerate: targetFps,
+          bitrate: bitrate,
+          latencyMode: 'realtime',
+          avc: { format: 'annexb' }
+        };
+        try {
+          const support = await VideoEncoder.isConfigSupported(cfg);
+          if (support && support.supported) {
+            chosenConfig = support.config || cfg;
+            break;
+          }
+        } catch (e) {}
+      }
+
+      if (!chosenConfig || !useWebCodecs) {
+        useWebCodecs = false;
+        updateCodecButtonUI('H.264 ไม่รองรับบนอุปกรณ์นี้ — สลับกลับ JPEG');
+        return null;
+      }
+
+      const enc = new VideoEncoder({
+        output: (chunk, meta) => {
+          const chunkBytes = new Uint8Array(chunk.byteLength);
+          chunk.copyTo(chunkBytes);
+          if (meta && meta.decoderConfig && meta.decoderConfig.description) {
+            const parsedDesc = extractAnnexBPrefix(meta.decoderConfig.description);
+            if (parsedDesc) h264Description = parsedDesc;
+          }
+          let outBytes = chunkBytes;
+          if (!startsWithAnnexB(chunkBytes)) {
+            if (h264Description) {
+              outBytes = new Uint8Array(h264Description.length + chunkBytes.length);
+              outBytes.set(h264Description, 0);
+              outBytes.set(chunkBytes, h264Description.length);
+            }
+          } else if (chunk.type === 'key' && h264Description && !startsWithAnnexBSps(chunkBytes)) {
+            outBytes = new Uint8Array(h264Description.length + chunkBytes.length);
+            outBytes.set(h264Description, 0);
+            outBytes.set(chunkBytes, h264Description.length);
+          }
+          const maxBuffer = targetWidth >= 3840 ? 3500000 : 1500000;
+          if (ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount < maxBuffer) {
+            ws.send(outBytes);
+            recordFrameStats(w, h, 'H264');
+          }
+        },
+        error: () => {
+          useWebCodecs = false;
+          closeVideoEncoder();
+          updateCodecButtonUI('H.264 Encoder ขัดข้อง — สลับกลับ JPEG');
+        }
+      });
+      enc.configure(chosenConfig);
+      videoEncoder = enc;
+      encoderConfigKey = key;
+      h264FrameIndex = 0;
+      h264Description = null;
+      return enc;
+    } catch (e) {
+      useWebCodecs = false;
+      closeVideoEncoder();
+      updateCodecButtonUI('H.264 ไม่รองรับ — ใช้ JPEG');
+      return null;
+    } finally {
+      encoderInitPromise = null;
+    }
+  })();
+
+  return encoderInitPromise;
+}
+
 function onVideoFrame(gen) {
   if (!isStreaming || gen !== frameLoopGen) return;
   scheduleNextFrame(gen);
   const maxEncodes = (targetFps >= 60 && !coolMode) ? 2 : 1;
-  if (document.visibilityState !== 'visible' || isPaused || encodesInFlight >= maxEncodes) return;
+  if (document.visibilityState !== 'visible' || isPaused || (!useWebCodecs && encodesInFlight >= maxEncodes)) return;
   if (videoEl.readyState < 2) return;
-
-  const slot = !canvasBusy[0] ? 0 : (!canvasBusy[1] ? 1 : -1);
-  if (slot < 0) return;
 
   const minGap = (1000 / targetFps) * 0.85;
   const now = performance.now();
@@ -1502,6 +1817,59 @@ function onVideoFrame(gen) {
 
   const w = videoEl.videoWidth || targetWidth;
   const h = videoEl.videoHeight || targetHeight;
+  const vw = videoEl.videoWidth || w;
+  const vh = videoEl.videoHeight || h;
+
+  if (useWebCodecs && ws && ws.readyState === WebSocket.OPEN) {
+    const encW = w & ~1;
+    const encH = h & ~1;
+    if (encW < 2 || encH < 2) return;
+    const key = `${encW}x${encH}@${targetFps}`;
+    if (!videoEncoder || videoEncoder.state !== 'configured' || encoderConfigKey !== key) {
+      ensureVideoEncoder(encW, encH);
+      return;
+    }
+    if (videoEncoder.encodeQueueSize >= 4) return;
+
+    let frameSource = videoEl;
+    if (softwareCropZoom > 1.01) {
+      const slot = !canvasBusy[0] ? 0 : (!canvasBusy[1] ? 1 : -1);
+      if (slot < 0) return;
+      const c = encodeCanvases[slot];
+      const cCtx = encodeCtxs[slot];
+      if (c.width !== encW || c.height !== encH) {
+        c.width = encW;
+        c.height = encH;
+        if (cCtx) cCtx.imageSmoothingEnabled = false;
+      }
+      const sw = vw / softwareCropZoom;
+      const sh = vh / softwareCropZoom;
+      const sx = (vw - sw) * 0.5;
+      const sy = (vh - sh) * 0.5;
+      cCtx.drawImage(videoEl, sx, sy, sw, sh, 0, 0, encW, encH);
+      frameSource = c;
+    }
+
+    lastFrameSendTime = now;
+    let frame = null;
+    try {
+      frame = new VideoFrame(frameSource, { timestamp: Math.round(now * 1000) });
+      const isKey = (h264FrameIndex % 60 === 0);
+      h264FrameIndex++;
+      videoEncoder.encode(frame, { keyFrame: isKey });
+    } catch (e) {
+      useWebCodecs = false;
+      closeVideoEncoder();
+      updateCodecButtonUI('H.264 Encode ล้มเหลว — ใช้ JPEG');
+    } finally {
+      if (frame) frame.close();
+    }
+    return;
+  }
+
+  const slot = !canvasBusy[0] ? 0 : (!canvasBusy[1] ? 1 : -1);
+  if (slot < 0) return;
+
   const c = encodeCanvases[slot];
   const cCtx = encodeCtxs[slot];
   if (c.width !== w || c.height !== h) {
@@ -1509,7 +1877,15 @@ function onVideoFrame(gen) {
     c.height = h;
     if (cCtx) cCtx.imageSmoothingEnabled = false;
   }
-  cCtx.drawImage(videoEl, 0, 0, w, h);
+  if (softwareCropZoom > 1.01) {
+    const sw = vw / softwareCropZoom;
+    const sh = vh / softwareCropZoom;
+    const sx = (vw - sw) * 0.5;
+    const sy = (vh - sh) * 0.5;
+    cCtx.drawImage(videoEl, sx, sy, sw, sh, 0, 0, w, h);
+  } else {
+    cCtx.drawImage(videoEl, 0, 0, w, h);
+  }
 
   canvasBusy[slot] = true;
   encodesInFlight++;
@@ -1576,7 +1952,7 @@ function recordFrameStats(w, h, transport) {
     frameCount = 0;
     lastFpsTime = now;
 
-    if (transport === 'WS') {
+    if (transport === 'WS' || transport === 'H264') {
       sendWsTelemetry({
         type: 'stats',
         w: w,
@@ -1697,6 +2073,153 @@ if (btnCool) {
   });
 }
 
+function updateMicButtonUI() {
+  if (!btnMic) return;
+  if (micActive) {
+    btnMic.classList.add('active');
+    btnMic.textContent = '🎙️ ไมค์ ON';
+  } else {
+    btnMic.classList.remove('active');
+    btnMic.textContent = '🎙️ ไมค์';
+  }
+}
+
+async function setMicState(enable) {
+  if (!enable) {
+    micActive = false;
+    updateMicButtonUI();
+    try { if (micProcessorNode) { micProcessorNode.onaudioprocess = null; micProcessorNode.disconnect(); } } catch (e) {}
+    try { if (micSourceNode) micSourceNode.disconnect(); } catch (e) {}
+    try { if (micGainNode) micGainNode.disconnect(); } catch (e) {}
+    micProcessorNode = null;
+    micSourceNode = null;
+    micGainNode = null;
+    if (micStream) {
+      try { micStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+      micStream = null;
+    }
+    if (audioCtx) {
+      try { await audioCtx.close(); } catch (e) {}
+      audioCtx = null;
+    }
+    return;
+  }
+
+  if (micActive && micStream) return;
+  micActive = true;
+  updateMicButtonUI();
+
+  try {
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          channelCount: 1,
+          sampleRate: 24000
+        }
+      });
+    } catch (e) {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    }
+
+    if (!micActive) {
+      stream.getTracks().forEach(t => t.stop());
+      return;
+    }
+
+    micStream = stream;
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    try {
+      audioCtx = new AudioCtx({ sampleRate: 24000 });
+    } catch (e) {
+      audioCtx = new AudioCtx();
+    }
+    if (audioCtx.state === 'suspended') {
+      await audioCtx.resume();
+    }
+
+    micSourceNode = audioCtx.createMediaStreamSource(micStream);
+    micProcessorNode = audioCtx.createScriptProcessor(2048, 1, 1);
+    micGainNode = audioCtx.createGain();
+    micGainNode.gain.value = 0;
+
+    micProcessorNode.onaudioprocess = (evt) => {
+      if (!micActive || !ws || ws.readyState !== WebSocket.OPEN) return;
+      const input = evt.inputBuffer.getChannelData(0);
+      const srcRate = (audioCtx && audioCtx.sampleRate) ? audioCtx.sampleRate : 24000;
+      let samples = input;
+      if (srcRate !== 24000 && srcRate > 0) {
+        const ratio = srcRate / 24000;
+        const outLen = Math.max(1, Math.floor(input.length / ratio));
+        const resampled = new Float32Array(outLen);
+        for (let i = 0; i < outLen; i++) {
+          const pos = i * ratio;
+          const idx = Math.floor(pos);
+          const frac = pos - idx;
+          const s0 = input[idx] || 0;
+          const s1 = input[Math.min(idx + 1, input.length - 1)] || s0;
+          resampled[i] = s0 + (s1 - s0) * frac;
+        }
+        samples = resampled;
+      }
+
+      const pkt = new Uint8Array(4 + samples.length * 2);
+      pkt[0] = 0x41; // 'A'
+      pkt[1] = 0x55; // 'U'
+      pkt[2] = 0x44; // 'D'
+      pkt[3] = 0x30; // '0'
+      const view = new DataView(pkt.buffer);
+      for (let i = 0; i < samples.length; i++) {
+        let s = samples[i];
+        if (s > 1) s = 1;
+        else if (s < -1) s = -1;
+        view.setInt16(4 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      }
+
+      if (ws.bufferedAmount < 524288) {
+        ws.send(pkt);
+      }
+    };
+
+    micSourceNode.connect(micProcessorNode);
+    micProcessorNode.connect(micGainNode);
+    micGainNode.connect(audioCtx.destination);
+  } catch (err) {
+    await setMicState(false);
+    alert('ไม่สามารถเปิดไมโครโฟนได้: ' + (err && err.message ? err.message : err));
+  }
+}
+
+if (btnCodec) {
+  btnCodec.addEventListener('click', () => {
+    if (typeof VideoEncoder === 'undefined') {
+      btnCodec.style.display = 'none';
+      return;
+    }
+    useWebCodecs = !useWebCodecs;
+    if (!useWebCodecs) {
+      closeVideoEncoder();
+    } else if (isStreaming) {
+      const w = (videoEl.videoWidth || targetWidth) & ~1;
+      const h = (videoEl.videoHeight || targetHeight) & ~1;
+      if (w >= 2 && h >= 2) ensureVideoEncoder(w, h);
+    }
+    updateCodecButtonUI();
+  });
+}
+
+if (btnMic) {
+  btnMic.addEventListener('click', async () => {
+    await setMicState(!micActive);
+    sendWsTelemetry({
+      type: 'userPrefs',
+      mic: micActive
+    });
+  });
+}
+
 document.getElementById('btnFs').addEventListener('click', () => {
   if (!document.fullscreenElement) {
     document.documentElement.requestFullscreen().catch(()=>{});
@@ -1707,6 +2230,8 @@ document.getElementById('btnFs').addEventListener('click', () => {
 
 updateResAndFpsButtonsUI();
 updateLensButtonsUI(currentLens);
+updateCodecButtonUI();
+updateMicButtonUI();
 
 navigator.permissions?.query({ name: 'camera' }).then(res => {
   if (res.state === 'granted') {

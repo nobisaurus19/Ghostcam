@@ -1,5 +1,7 @@
 using System;
 using System.Diagnostics;
+using System.IO;
+using System.Reflection;
 using System.Windows;
 
 namespace Ghostcam.Studio;
@@ -76,7 +78,69 @@ public partial class App : Application
         {
         }
 
+        EnsurePortableRuntimeExtracted();
+
         base.OnStartup(e);
+    }
+
+    private static void EnsurePortableRuntimeExtracted()
+    {
+        try
+        {
+            string runtimeDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ghostcam", "runtime");
+            string scriptsDir = Path.Combine(runtimeDir, "scripts");
+            Directory.CreateDirectory(scriptsDir);
+            ExtractEmbeddedIfNeeded("Ghostcam.Embedded.GhostCamVirtualCamera.dll", Path.Combine(runtimeDir, "GhostCamVirtualCamera.dll"));
+            ExtractEmbeddedIfNeeded("Ghostcam.Embedded.Register-GhostCam.ps1", Path.Combine(scriptsDir, "Register-GhostCam.ps1"));
+        }
+        catch
+        {
+        }
+    }
+
+    private static void ExtractEmbeddedIfNeeded(string resourceName, string targetPath)
+    {
+        try
+        {
+            using Stream? resStream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resourceName);
+            if (resStream == null) return;
+
+            bool needsWrite = !File.Exists(targetPath) || new FileInfo(targetPath).Length != resStream.Length;
+            byte[]? resBytes = null;
+
+            if (!needsWrite)
+            {
+                resBytes = new byte[resStream.Length];
+                resStream.ReadExactly(resBytes);
+                byte[] existingBytes = File.ReadAllBytes(targetPath);
+                if (!resBytes.AsSpan().SequenceEqual(existingBytes))
+                {
+                    needsWrite = true;
+                }
+            }
+
+            if (!needsWrite) return;
+
+            if (resBytes == null)
+            {
+                resBytes = new byte[resStream.Length];
+                resStream.ReadExactly(resBytes);
+            }
+
+            string tempPath = targetPath + $".{Environment.ProcessId}.tmp";
+            try
+            {
+                File.WriteAllBytes(tempPath, resBytes);
+                File.Move(tempPath, targetPath, overwrite: true);
+            }
+            catch
+            {
+                try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+            }
+        }
+        catch
+        {
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)

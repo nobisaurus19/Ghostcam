@@ -1403,7 +1403,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 Path.Combine(appDir, "scripts", "Register-GhostCam.ps1"),
                 Path.Combine(appDir, "..", "scripts", "Register-GhostCam.ps1"),
                 Path.Combine(appDir, "..", "..", "..", "..", "scripts", "Register-GhostCam.ps1"),
-                Path.Combine(Environment.CurrentDirectory, "scripts", "Register-GhostCam.ps1")
+                Path.Combine(Environment.CurrentDirectory, "scripts", "Register-GhostCam.ps1"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ghostcam", "runtime", "scripts", "Register-GhostCam.ps1")
             ];
 
             string? scriptPath = null;

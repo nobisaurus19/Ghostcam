@@ -23,6 +23,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="..\GhostCamVirtualCamera\bin\x64\Release\GhostCamVirtualCamera.dll" LogicalName="Ghostcam.Embedded.GhostCamVirtualCamera.dll" />
+    <EmbeddedResource Include="..\..\scripts\Register-GhostCam.ps1" LogicalName="Ghostcam.Embedded.Register-GhostCam.ps1" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="..\GhostCamVirtualCamera\bin\x64\Release\GhostCamVirtualCamera.dll">
       <Link>GhostCamVirtualCamera.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

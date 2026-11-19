@@ -3,7 +3,8 @@
 > **Turn your iPhone or Android into a 60 FPS 4K Wireless Webcam & Windows Virtual Camera — No Phone App Required, Zero Watermarks.**  
 > **เปลี่ยนมือถือ iPhone / Android ให้เป็นกล้องเว็บแคมไร้สายระดับ 4K 60 FPS พร้อม Virtual Camera บน Windows 10/11 — ไม่ต้องลงแอปในมือถือ ไม่มีลายน้ำ**
 
-[![Download Latest Release](https://img.shields.io/badge/Download-Ghostcam--win--x64.zip-00B995?style=for-the-badge&logo=github)](https://github.com/nobisaurus19/Ghostcam/releases/latest)
+[![Download Portable EXE](https://img.shields.io/badge/Download-Ghostcam--Portable.exe-00B995?style=for-the-badge&logo=github)](https://github.com/nobisaurus19/Ghostcam/releases/latest)
+[![Download ZIP](https://img.shields.io/badge/Zip-Ghostcam--win--x64.zip-1F2937?style=for-the-badge&logo=github)](https://github.com/nobisaurus19/Ghostcam/releases/latest)
 [![Platform](https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-111111?style=for-the-badge&logo=windows)](https://github.com/nobisaurus19/Ghostcam/releases/latest)
 [![.NET 8.0](https://img.shields.io/badge/.NET-8.0--windows-512BD4?style=for-the-badge&logo=dotnet)](https://dotnet.microsoft.com/)
 
@@ -11,11 +12,14 @@
 
 ## 📦 Direct Download (สำหรับผู้ใช้งานทั่วไป)
 
-**[⬇️ Download `Ghostcam-win-x64.zip` (Latest Release)](https://github.com/nobisaurus19/Ghostcam/releases/latest)**
+1. **Option 1 (Recommended): [`Ghostcam-Portable.exe` (1-Click Single File Portable)](https://github.com/nobisaurus19/Ghostcam/releases/latest)**
+   - **ไฟล์เดียวจบ ไม่ต้องแตกไฟล์ Zip ไม่ต้องลง .NET เปิดใช้งานได้ทันที!**
+   - Self-contained single-file executable for Windows 10 / 11 (64-bit) — automatically extracts the embedded `GhostCamVirtualCamera.dll` and one-click registration helper on launch.
 
-- **Self-Contained Portable Package** for Windows 10 / 11 (64-bit).
-- **No .NET SDK or runtime installation required** — just unzip and run `Ghostcam.exe`.
-- Includes the prebuilt native Windows Virtual Camera (`GhostCamVirtualCamera.dll`) and one-click registration helper.
+2. **Option 2: [`Ghostcam-win-x64.zip` (Portable Folder)](https://github.com/nobisaurus19/Ghostcam/releases/latest)**
+   - **Self-Contained Portable Package** for Windows 10 / 11 (64-bit).
+   - **No .NET SDK or runtime installation required** — just unzip and run `Ghostcam.exe`.
+   - Includes the prebuilt native Windows Virtual Camera (`GhostCamVirtualCamera.dll`) and one-click registration helper.
 
 ---
 
@@ -48,10 +52,10 @@
 
 ## 🚀 Quick Start (For Users / วิธีใช้งานเบื้องต้น)
 
-1. **Download & Extract**
-   - Download [`Ghostcam-win-x64.zip`](https://github.com/nobisaurus19/Ghostcam/releases/latest) and extract it to any folder (e.g., `C:\Tools\Ghostcam`).
+1. **Download**
+   - Download [`Ghostcam-Portable.exe`](https://github.com/nobisaurus19/Ghostcam/releases/latest) (single-file portable, no extraction needed) — or download [`Ghostcam-win-x64.zip`](https://github.com/nobisaurus19/Ghostcam/releases/latest) and extract it to any folder (e.g., `C:\Tools\Ghostcam`).
 2. **Launch Ghostcam Studio**
-   - Run `Ghostcam.exe` (or `Run-Ghostcam.bat` when running from source).
+   - Run `Ghostcam-Portable.exe` (or `Ghostcam.exe` from the Zip package, or `Run-Ghostcam.bat` when running from source).
 3. **Connect Your Phone (Wireless QR)**
    - Ensure your PC and phone are on the **same Wi-Fi network**.
    - Select **MOBILE WEBCAM (Safari / QR)** and scan the QR code with your iPhone (Safari) or Android (Chrome).

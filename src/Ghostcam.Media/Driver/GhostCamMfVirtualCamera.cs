@@ -123,6 +123,10 @@ public sealed unsafe class GhostCamMfVirtualCamera : IDisposable
                 {
                     localDll = Path.GetFullPath(Path.Combine(appDir, @"..\..\..\..\GhostCamVirtualCamera\bin\x64\Release\GhostCamVirtualCamera.dll"));
                 }
+                if (!File.Exists(localDll))
+                {
+                    localDll = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ghostcam", "runtime", "GhostCamVirtualCamera.dll");
+                }
                 if (!File.Exists(localDll)) return true;
 
                 var localInfo = new FileInfo(localDll);
@@ -171,6 +175,14 @@ public sealed unsafe class GhostCamMfVirtualCamera : IDisposable
             if (File.Exists(localDll))
             {
                 NativeMethods.LoadLibrary(localDll);
+                _dllPreloaded = true;
+                return;
+            }
+
+            string portableDll = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ghostcam", "runtime", "GhostCamVirtualCamera.dll");
+            if (File.Exists(portableDll))
+            {
+                NativeMethods.LoadLibrary(portableDll);
                 _dllPreloaded = true;
                 return;
             }

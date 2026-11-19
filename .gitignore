@@ -27,6 +27,8 @@ src/GhostCamVirtualCamera/Test-GhostCamVirtualCamera.exe
 
 # Keep essential runtime binaries & prebuilt Virtual Camera DLL for instant use
 !Ghostcam.exe
+# Large standalone portable binary is hosted on GitHub Releases
+Ghostcam-Portable.exe
 !src/GhostCamVirtualCamera/bin/
 !src/GhostCamVirtualCamera/bin/x64/
 !src/GhostCamVirtualCamera/bin/x64/Release/

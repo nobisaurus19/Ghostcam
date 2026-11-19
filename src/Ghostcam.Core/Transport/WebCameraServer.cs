@@ -32,6 +32,7 @@ public sealed class WebCameraServer : IDisposable
     private X509Certificate2? _certificate;
     private CancellationTokenSource? _serverCts;
     private long _framesLogged;
+    private long _unknownBinaryLogged;
     private bool _isDisposed;
     private byte[]? _latestPendingFrame;
     private int _dispatchProcessing = 0;
@@ -67,13 +68,29 @@ public sealed class WebCameraServer : IDisposable
 
     private readonly ConcurrentDictionary<long, WebSocket> _activeWebSockets = new();
     private long _nextWsId;
+    private volatile bool _forceJpegFallback;
+
+    public bool HasActiveWebSocketClients => !_activeWebSockets.IsEmpty;
+    public bool ForceJpegFallback => _forceJpegFallback;
 
     public string BuildControlJson()
     {
         lock (_stateLock)
         {
-            return $"{{\"v\":{CommandVersion},\"lens\":\"{DesiredLens}\",\"w\":{DesiredWidth},\"h\":{DesiredHeight},\"fps\":{DesiredFps},\"torch\":{(TorchEnabled ? "true" : "false")},\"paused\":{(IsStreamPaused ? "true" : "false")},\"mic\":{(MicEnabled ? "true" : "false")},\"iso\":{DesiredIso.ToString("0", CultureInfo.InvariantCulture)},\"shutter\":{DesiredShutter.ToString("0", CultureInfo.InvariantCulture)},\"wb\":{DesiredWb.ToString("0", CultureInfo.InvariantCulture)},\"focus\":{DesiredFocus.ToString("0.##", CultureInfo.InvariantCulture)}}}";
+            return $"{{\"v\":{CommandVersion},\"lens\":\"{DesiredLens}\",\"w\":{DesiredWidth},\"h\":{DesiredHeight},\"fps\":{DesiredFps},\"torch\":{(TorchEnabled ? "true" : "false")},\"paused\":{(IsStreamPaused ? "true" : "false")},\"mic\":{(MicEnabled ? "true" : "false")},\"forceJpeg\":{(ForceJpegFallback ? "true" : "false")},\"iso\":{DesiredIso.ToString("0", CultureInfo.InvariantCulture)},\"shutter\":{DesiredShutter.ToString("0", CultureInfo.InvariantCulture)},\"wb\":{DesiredWb.ToString("0", CultureInfo.InvariantCulture)},\"focus\":{DesiredFocus.ToString("0.##", CultureInfo.InvariantCulture)}}}";
         }
+    }
+
+    public void RequestForceJpegFallback()
+    {
+        lock (_stateLock)
+        {
+            if (_forceJpegFallback) return;
+            _forceJpegFallback = true;
+            CommandVersion++;
+            LogMessage?.Invoke($"[WebCam] Requesting automatic H.264 -> JPEG fallback (v{CommandVersion})");
+        }
+        _ = BroadcastControlStateAsync();
     }
 
     public void UpdateDesiredState(
@@ -498,7 +515,7 @@ public sealed class WebCameraServer : IDisposable
                                         }
                                         H264ChunkReceived?.Invoke(messageBytes);
                                     }
-                                    else
+                                    else if (messageBytes.Length >= 2 && messageBytes[0] == 0xFF && messageBytes[1] == 0xD8)
                                     {
                                         long count = Interlocked.Increment(ref _framesLogged);
                                         if (count <= 5 || count % 150 == 0)
@@ -506,6 +523,15 @@ public sealed class WebCameraServer : IDisposable
                                             LogMessage?.Invoke($"[WebCam] WS JPEG frame #{count} ({messageBytes.Length} bytes) from {remoteEp}");
                                         }
                                         DispatchLatestFrame(messageBytes);
+                                    }
+                                    else
+                                    {
+                                        long unknownCount = Interlocked.Increment(ref _unknownBinaryLogged);
+                                        if (unknownCount <= 5 || unknownCount % 60 == 0)
+                                        {
+                                            string headHex = BitConverter.ToString(messageBytes, 0, Math.Min(8, messageBytes.Length));
+                                            LogMessage?.Invoke($"[WebCam] Ignored unknown binary frame #{unknownCount} ({messageBytes.Length} bytes, head={headHex}) from {remoteEp}");
+                                        }
                                     }
                                 }
                             }
@@ -672,6 +698,10 @@ public sealed class WebCameraServer : IDisposable
 
     private void DispatchLatestFrame(byte[] frameBytes)
     {
+        if (frameBytes.Length >= 2 && frameBytes[0] == 0xFF && frameBytes[1] == 0xD8)
+        {
+            _forceJpegFallback = false;
+        }
         Interlocked.Exchange(ref _latestPendingFrame, frameBytes);
         if (Interlocked.CompareExchange(ref _dispatchProcessing, 1, 0) == 0)
         {
@@ -1085,6 +1115,8 @@ let encoderConfigKey = '';
 let encoderInitPromise = null;
 let h264FrameIndex = 0;
 let h264Description = null;
+let h264EnableTime = 0;
+let lastH264OutputTime = 0;
 
 let micActive = false;
 let micStream = null;
@@ -1141,6 +1173,8 @@ let ws = null;
 let wsReconnectTimer = null;
 let frameLoopGen = 0;
 let lastFrameSendTime = 0;
+let lastFrameTickTime = 0;
+let frameWatchdogTimer = null;
 let httpFallbackInFlight = 0;
 let statusPollTimer = null;
 
@@ -1301,6 +1335,7 @@ async function startCamera() {
       connectWs();
       startStatusPollingFallback();
     }
+    ensureFrameWatchdog();
     scheduleNextFrame(++frameLoopGen);
   } catch (err) {
     statusBadge.textContent = '❌ ERROR';
@@ -1508,6 +1543,12 @@ function switchLens(lens) {
 }
 
 function handleServerCommand(cmd) {
+  if (cmd.forceJpeg === true && useWebCodecs) {
+    useWebCodecs = false;
+    closeVideoEncoder();
+    updateCodecButtonUI('สลับกลับ JPEG อัตโนมัติ');
+  }
+
   if (typeof cmd.paused === 'boolean') {
     isPaused = cmd.paused;
     pauseBanner.style.display = isPaused ? 'flex' : 'none';
@@ -1615,6 +1656,15 @@ function startStreamingLoop() {
   scheduleNextFrame(++frameLoopGen);
 }
 
+function ensureFrameWatchdog() {
+  if (frameWatchdogTimer) return;
+  frameWatchdogTimer = setInterval(() => {
+    if (isStreaming && !isPaused && videoEl && videoEl.readyState >= 2 && (performance.now() - lastFrameTickTime > 140)) {
+      onVideoFrame(++frameLoopGen);
+    }
+  }, 60);
+}
+
 function scheduleNextFrame(gen) {
   if (!isStreaming || gen !== frameLoopGen) return;
   if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
@@ -1641,6 +1691,8 @@ function closeVideoEncoder() {
   encoderConfigKey = '';
   h264Description = null;
   h264FrameIndex = 0;
+  h264EnableTime = 0;
+  lastH264OutputTime = 0;
   if (videoEncoder) {
     try {
       if (videoEncoder.state !== 'closed') videoEncoder.close();
@@ -1709,6 +1761,32 @@ function extractAnnexBPrefix(desc) {
   return null;
 }
 
+function convertAvccToAnnexB(u8) {
+  if (!u8 || u8.length < 5) return null;
+  const chunks = [];
+  let total = 0;
+  let offset = 0;
+  while (offset + 4 <= u8.length) {
+    const len = ((u8[offset] << 24) | (u8[offset + 1] << 16) | (u8[offset + 2] << 8) | u8[offset + 3]) >>> 0;
+    offset += 4;
+    if (len === 0 || offset + len > u8.length) {
+      return null;
+    }
+    chunks.push(u8.subarray(offset, offset + len));
+    total += 4 + len;
+    offset += len;
+  }
+  if (offset !== u8.length || total === 0) return null;
+  const out = new Uint8Array(total);
+  let p = 0;
+  for (const nalu of chunks) {
+    out[p++] = 0; out[p++] = 0; out[p++] = 0; out[p++] = 1;
+    out.set(nalu, p);
+    p += nalu.length;
+  }
+  return out;
+}
+
 function ensureVideoEncoder(w, h) {
   if (typeof VideoEncoder === 'undefined') {
     useWebCodecs = false;
@@ -1729,19 +1807,26 @@ function ensureVideoEncoder(w, h) {
     try {
       let chosenConfig = null;
       for (const codec of candidates) {
-        const cfg = {
+        const baseCfg = {
           codec: codec,
           width: w,
           height: h,
           framerate: targetFps,
           bitrate: bitrate,
-          latencyMode: 'realtime',
-          avc: { format: 'annexb' }
+          latencyMode: 'realtime'
         };
+        const cfg = Object.assign({}, baseCfg, { avc: { format: 'annexb' } });
         try {
           const support = await VideoEncoder.isConfigSupported(cfg);
           if (support && support.supported) {
-            chosenConfig = support.config || cfg;
+            chosenConfig = Object.assign({}, support.config || cfg, { avc: { format: 'annexb' } });
+            break;
+          }
+        } catch (e) {}
+        try {
+          const support2 = await VideoEncoder.isConfigSupported(baseCfg);
+          if (support2 && support2.supported) {
+            chosenConfig = support2.config || baseCfg;
             break;
           }
         } catch (e) {}
@@ -1755,23 +1840,29 @@ function ensureVideoEncoder(w, h) {
 
       const enc = new VideoEncoder({
         output: (chunk, meta) => {
-          const chunkBytes = new Uint8Array(chunk.byteLength);
-          chunk.copyTo(chunkBytes);
+          lastH264OutputTime = performance.now();
+          const rawChunk = new Uint8Array(chunk.byteLength);
+          chunk.copyTo(rawChunk);
           if (meta && meta.decoderConfig && meta.decoderConfig.description) {
             const parsedDesc = extractAnnexBPrefix(meta.decoderConfig.description);
             if (parsedDesc) h264Description = parsedDesc;
           }
-          let outBytes = chunkBytes;
+          let chunkBytes = rawChunk;
           if (!startsWithAnnexB(chunkBytes)) {
-            if (h264Description) {
-              outBytes = new Uint8Array(h264Description.length + chunkBytes.length);
-              outBytes.set(h264Description, 0);
-              outBytes.set(chunkBytes, h264Description.length);
-            }
-          } else if (chunk.type === 'key' && h264Description && !startsWithAnnexBSps(chunkBytes)) {
+            const converted = convertAvccToAnnexB(chunkBytes);
+            if (converted) chunkBytes = converted;
+          }
+          if (!startsWithAnnexB(chunkBytes)) {
+            return;
+          }
+          let outBytes = chunkBytes;
+          if (chunk.type === 'key' && h264Description && !startsWithAnnexBSps(chunkBytes)) {
             outBytes = new Uint8Array(h264Description.length + chunkBytes.length);
             outBytes.set(h264Description, 0);
             outBytes.set(chunkBytes, h264Description.length);
+          }
+          if (!startsWithAnnexB(outBytes)) {
+            return;
           }
           const maxBuffer = targetWidth >= 3840 ? 3500000 : 1500000;
           if (ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount < maxBuffer) {
@@ -1785,6 +1876,8 @@ function ensureVideoEncoder(w, h) {
           updateCodecButtonUI('H.264 Encoder ขัดข้อง — สลับกลับ JPEG');
         }
       });
+      h264EnableTime = performance.now();
+      lastH264OutputTime = 0;
       enc.configure(chosenConfig);
       videoEncoder = enc;
       encoderConfigKey = key;
@@ -1806,6 +1899,7 @@ function ensureVideoEncoder(w, h) {
 
 function onVideoFrame(gen) {
   if (!isStreaming || gen !== frameLoopGen) return;
+  lastFrameTickTime = performance.now();
   scheduleNextFrame(gen);
   const maxEncodes = (targetFps >= 60 && !coolMode) ? 2 : 1;
   if (document.visibilityState !== 'visible' || isPaused || (!useWebCodecs && encodesInFlight >= maxEncodes)) return;
@@ -1813,6 +1907,11 @@ function onVideoFrame(gen) {
 
   const minGap = (1000 / targetFps) * 0.85;
   const now = performance.now();
+  if (useWebCodecs && videoEncoder && videoEncoder.state === 'configured' && !lastH264OutputTime && h264EnableTime > 0 && (now - h264EnableTime > 1500)) {
+    useWebCodecs = false;
+    closeVideoEncoder();
+    updateCodecButtonUI('H.264 ไม่ส่งเฟรม — สลับกลับ JPEG');
+  }
   if (now - lastFrameSendTime < minGap) return;
 
   const w = videoEl.videoWidth || targetWidth;

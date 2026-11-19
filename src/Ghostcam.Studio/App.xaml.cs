@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Windows;
 
@@ -59,17 +60,32 @@ public partial class App : Application
         try
         {
             int currentPid = Environment.ProcessId;
-            foreach (var p in Process.GetProcessesByName("Ghostcam.Studio"))
+            using Process currentProc = Process.GetCurrentProcess();
+            var processNames = new[]
             {
-                if (p.Id != currentPid)
+                "Ghostcam.Studio",
+                "Ghostcam-Portable",
+                "Ghostcam",
+                currentProc.ProcessName
+            }.Distinct(StringComparer.OrdinalIgnoreCase);
+
+            foreach (string procName in processNames)
+            {
+                foreach (Process p in Process.GetProcessesByName(procName))
                 {
-                    try
+                    using (p)
                     {
-                        p.Kill();
-                        p.WaitForExit(1000);
-                    }
-                    catch
-                    {
+                        if (p.Id != currentPid)
+                        {
+                            try
+                            {
+                                p.Kill();
+                                p.WaitForExit(2000);
+                            }
+                            catch
+                            {
+                            }
+                        }
                     }
                 }
             }

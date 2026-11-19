@@ -93,6 +93,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private int _isUiRenderPending = 0;
     private int _renderedFrameCount = 0;
     private long _webCamFramesDecoded = 0;
+    private int _h264ChunksSinceLastDecode = 0;
     private byte[]? _decodeBgraBuffer;
     private long _webCamBytesInWindow;
     private int _lastReportedWebWidth;
@@ -661,13 +662,16 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         _savedConfig = StudioSettingsStore.Load();
         _isLoadingSettings = true;
+        _suppressWebCamSync = true;
         try
         {
             IsDarkTheme = _savedConfig.IsDarkTheme;
             ApplyProfileData(_savedConfig.Current);
+            SelectedLens = "Wide 1x";
         }
         finally
         {
+            _suppressWebCamSync = false;
             _isLoadingSettings = false;
         }
 
@@ -884,6 +888,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _nalParser.OnFrameDecoded += (bgraFrame, width, height) =>
         {
             _hasDecodedRealFrame = true;
+            Interlocked.Exchange(ref _h264ChunksSinceLastDecode, 0);
+            Interlocked.Exchange(ref _lastRealFrameTimestamp, Stopwatch.GetTimestamp());
             if (_syntheticSource.IsRunning)
                 _syntheticSource.Stop();
             ProcessAndRenderFrame(bgraFrame, width, height);
@@ -933,6 +939,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 });
             }
             _nalParser.FeedChunk(chunk);
+            if (Interlocked.Increment(ref _h264ChunksSinceLastDecode) > 45)
+            {
+                Interlocked.Exchange(ref _h264ChunksSinceLastDecode, 0);
+                _webCameraServer.RequestForceJpegFallback();
+            }
         };
         _webCameraServer.AudioPacketReceived += pcm => _audioPlayer.PushPcmChunk(pcm);
         _webCameraServer.ClientTelemetryReceived += HandleWebCamTelemetry;
@@ -1016,6 +1027,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 converted.CopyPixels(bgra, width * 4, 0);
 
                 _hasDecodedRealFrame = true;
+                Interlocked.Exchange(ref _h264ChunksSinceLastDecode, 0);
                 Interlocked.Exchange(ref _lastRealFrameTimestamp, Stopwatch.GetTimestamp());
                 if (_syntheticSource.IsRunning)
                 {
@@ -1064,6 +1076,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 return;
 
             string? type = typeProp.GetString();
+            if (type == "caps" || type == "userPrefs" || type == "stats")
+            {
+                Interlocked.Exchange(ref _lastRealFrameTimestamp, Stopwatch.GetTimestamp());
+            }
             if (type == "caps")
             {
                 int w = root.TryGetProperty("w", out var pw) && pw.TryGetInt32(out int valW) ? valW : 0;
@@ -1097,8 +1113,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 int? fps = root.TryGetProperty("fps", out var pfps) && pfps.TryGetInt32(out int vfps) ? vfps : null;
                 string? lens = root.TryGetProperty("lens", out var plens) ? plens.GetString() : null;
                 bool? torch = root.TryGetProperty("torch", out var ptorch) && (ptorch.ValueKind == JsonValueKind.True || ptorch.ValueKind == JsonValueKind.False) ? ptorch.GetBoolean() : null;
-
-                _webCameraServer.ApplyClientPreferences(w, h, fps, lens);
 
                 _ = _dispatcher.BeginInvoke(() =>
                 {
@@ -1498,7 +1512,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         if ((SourceMode == CamoSourceMode.SafariWebCam || SourceMode == CamoSourceMode.WifiQrPairing) && IsPhoneConnected)
         {
             long lastReal = Interlocked.Read(ref _lastRealFrameTimestamp);
-            if (lastReal > 0 && (Stopwatch.GetTimestamp() - lastReal) > Stopwatch.Frequency * 4)
+            if (!_webCameraServer.HasActiveWebSocketClients && IsSensorAwake && lastReal > 0 && (Stopwatch.GetTimestamp() - lastReal) > Stopwatch.Frequency * 3)
             {
                 IsPhoneConnected = false;
                 ConnectionStatusBadge = "🌐 MOBILE WEBCAM (READY)";

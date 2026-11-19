@@ -1,0 +1,8 @@
+LIBRARY GhostCamVirtualCamera
+EXPORTS
+    DllGetClassObject               PRIVATE
+    DllCanUnloadNow                 PRIVATE
+    DllRegisterServer               PRIVATE
+    DllUnregisterServer             PRIVATE
+    GhostCam_CreateAndStartSession
+    GhostCam_StopAndReleaseSession

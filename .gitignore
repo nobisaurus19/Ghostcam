@@ -1,0 +1,33 @@
+# Build outputs & temp files
+src/Ghostcam.Core/bin/
+src/Ghostcam.Core/obj/
+src/Ghostcam.Media/bin/
+src/Ghostcam.Media/obj/
+src/Ghostcam.Studio/bin/
+src/Ghostcam.Studio/obj/
+src/GhostCamVirtualCamera/bin/x64/Release/*.obj
+src/GhostCamVirtualCamera/bin/x64/Release/*.lib
+src/GhostCamVirtualCamera/bin/x64/Release/*.exp
+*.obj
+*.pdb
+*.exp
+*.lib
+*.user
+*.suo
+.vs/
+*.log
+*.zip
+publish/
+
+# Third-party reference & diagnostic probes (not needed to run/build Ghostcam)
+lib/CamoStudio.dll
+scripts/probe_camo.cpp
+scripts/probe_camo.exe
+src/GhostCamVirtualCamera/Test-GhostCamVirtualCamera.exe
+
+# Keep essential runtime binaries & prebuilt Virtual Camera DLL for instant use
+!Ghostcam.exe
+!src/GhostCamVirtualCamera/bin/
+!src/GhostCamVirtualCamera/bin/x64/
+!src/GhostCamVirtualCamera/bin/x64/Release/
+!src/GhostCamVirtualCamera/bin/x64/Release/GhostCamVirtualCamera.dll

@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Ghostcam.Core</RootNamespace>
+    <AssemblyName>Ghostcam.Core</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="BouncyCastle.Cryptography">
+      <HintPath>..\..\lib\BouncyCastle.Cryptography.dll</HintPath>
+    </Reference>
+    <Reference Include="Common.Logging">
+      <HintPath>..\..\lib\Common.Logging.dll</HintPath>
+    </Reference>
+    <Reference Include="Common.Logging.Core">
+      <HintPath>..\..\lib\Common.Logging.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="Makaretu.Dns">
+      <HintPath>..\..\lib\Makaretu.Dns.dll</HintPath>
+    </Reference>
+    <Reference Include="Makaretu.Dns.Multicast">
+      <HintPath>..\..\lib\Makaretu.Dns.Multicast.dll</HintPath>
+    </Reference>
+    <Reference Include="QRCoder">
+      <HintPath>..\..\lib\QRCoder.dll</HintPath>
+    </Reference>
+    <Reference Include="SimpleBase">
+      <HintPath>..\..\lib\SimpleBase.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Net.IPNetwork">
+      <HintPath>..\..\lib\System.Net.IPNetwork.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

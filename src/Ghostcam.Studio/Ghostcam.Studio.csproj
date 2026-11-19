@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>Ghostcam.Studio</RootNamespace>
+    <AssemblyName>Ghostcam.Studio</AssemblyName>
+    <ApplicationIcon>ghostcam.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ghostcam.Core\Ghostcam.Core.csproj" />
+    <ProjectReference Include="..\Ghostcam.Media\Ghostcam.Media.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Fonts\*.ttf" />
+    <Resource Include="ghostcam.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\GhostCamVirtualCamera\bin\x64\Release\GhostCamVirtualCamera.dll">
+      <Link>GhostCamVirtualCamera.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\..\scripts\**\*.*">
+      <Link>scripts\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

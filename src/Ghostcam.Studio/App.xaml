@@ -1,0 +1,436 @@
+<Application x:Class="Ghostcam.Studio.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converters="clr-namespace:Ghostcam.Studio.Converters"
+             StartupUri="MainWindow.xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Index 0: Runtime theme dictionary (swapped by App.SetTheme) -->
+                <ResourceDictionary Source="Themes/YoyuLight.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- ================= YOYU TYPOGRAPHY STACK ================= -->
+            <FontFamily x:Key="FontYoyuPixel">pack://application:,,,/Ghostcam.Studio;component/Fonts/#DotGothic16, pack://application:,,,/Ghostcam.Studio;component/Fonts/#IBM Plex Sans Thai, Consolas</FontFamily>
+            <FontFamily x:Key="FontYoyuMono">pack://application:,,,/Ghostcam.Studio;component/Fonts/#IBM Plex Mono, pack://application:,,,/Ghostcam.Studio;component/Fonts/#DotGothic16, pack://application:,,,/Ghostcam.Studio;component/Fonts/#IBM Plex Sans Thai, Consolas</FontFamily>
+            <FontFamily x:Key="FontYoyuSans">pack://application:,,,/Ghostcam.Studio;component/Fonts/#IBM Plex Sans Thai, Segoe UI</FontFamily>
+
+            <!-- ================= CONVERTERS ================= -->
+            <converters:BoolToVisibilityConverter x:Key="BoolToVis"/>
+            <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Inverted="True"/>
+            <converters:InverseBoolConverter x:Key="InverseBool"/>
+            <converters:EnumEqualsConverter x:Key="EnumEquals"/>
+            <converters:FloatDisplayConverter x:Key="FloatDisplay"/>
+
+            <!-- ================= YOYU SCROLLBAR & SCROLLVIEWER ================= -->
+            <Style x:Key="YoyuScrollThumbStyle" TargetType="{x:Type Thumb}">
+                <Setter Property="OverridesDefaultStyle" Value="True"/>
+                <Setter Property="IsTabStop" Value="False"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type Thumb}">
+                            <Border x:Name="thumbBorder"
+                                    Background="{DynamicResource BrushBorderPassive}"
+                                    CornerRadius="0"
+                                    Margin="0"/>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="thumbBorder" Property="Background" Value="{DynamicResource BrushInkMuted}"/>
+                                </Trigger>
+                                <Trigger Property="IsDragging" Value="True">
+                                    <Setter TargetName="thumbBorder" Property="Background" Value="{DynamicResource BrushInkPrimary}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style TargetType="{x:Type ScrollBar}">
+                <Setter Property="OverridesDefaultStyle" Value="True"/>
+                <Setter Property="Width" Value="5"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type ScrollBar}">
+                            <Grid Background="Transparent">
+                                <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                    <Track.Thumb>
+                                        <Thumb Style="{StaticResource YoyuScrollThumbStyle}"/>
+                                    </Track.Thumb>
+                                </Track>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style TargetType="{x:Type ScrollViewer}">
+                <Setter Property="OverridesDefaultStyle" Value="True"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type ScrollViewer}">
+                            <Grid>
+                                <ScrollContentPresenter CanContentScroll="{TemplateBinding CanContentScroll}"/>
+                                <ScrollBar x:Name="PART_VerticalScrollBar"
+                                           HorizontalAlignment="Right"
+                                           Value="{TemplateBinding VerticalOffset}"
+                                           Maximum="{TemplateBinding ScrollableHeight}"
+                                           ViewportSize="{TemplateBinding ViewportHeight}"
+                                           Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"
+                                           Width="5"/>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- ================= YOYU PRECISION HARDWARE FADER SLIDER ================= -->
+            <Style x:Key="SliderThumbStyle" TargetType="{x:Type Thumb}">
+                <Setter Property="SnapsToDevicePixels" Value="True"/>
+                <Setter Property="OverridesDefaultStyle" Value="True"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type Thumb}">
+                            <Border x:Name="thumbBorder"
+                                    Width="10"
+                                    Height="18"
+                                    CornerRadius="0"
+                                    Background="{DynamicResource BrushCardBg}"
+                                    BorderBrush="{DynamicResource BrushInkPrimary}"
+                                    BorderThickness="1.5"
+                                    SnapsToDevicePixels="True">
+                                <Rectangle x:Name="thumbNotch"
+                                           Width="2"
+                                           Height="8"
+                                           Fill="{DynamicResource BrushInkPrimary}"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="thumbBorder" Property="Background" Value="{DynamicResource BrushSecondaryBg}"/>
+                                </Trigger>
+                                <Trigger Property="IsDragging" Value="True">
+                                    <Setter TargetName="thumbBorder" Property="Background" Value="{DynamicResource BrushInkPrimary}"/>
+                                    <Setter TargetName="thumbNotch" Property="Fill" Value="{DynamicResource BrushCardBg}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <ControlTemplate x:Key="SliderDecreaseRepeatButtonTemplate" TargetType="{x:Type RepeatButton}">
+                <Grid Background="Transparent">
+                    <Border Height="6"
+                            CornerRadius="0"
+                            Background="{DynamicResource BrushInkPrimary}"
+                            VerticalAlignment="Center"/>
+                </Grid>
+            </ControlTemplate>
+
+            <ControlTemplate x:Key="SliderIncreaseRepeatButtonTemplate" TargetType="{x:Type RepeatButton}">
+                <Grid Background="Transparent"/>
+            </ControlTemplate>
+
+            <Style TargetType="{x:Type Slider}">
+                <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                <Setter Property="SnapsToDevicePixels" Value="True"/>
+                <Setter Property="Margin" Value="0,2,0,6"/>
+                <Setter Property="IsMoveToPointEnabled" Value="True"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type Slider}">
+                            <Grid VerticalAlignment="Center">
+                                <!-- Background Unfilled Track -->
+                                <Border Height="6"
+                                        CornerRadius="0"
+                                        Background="{DynamicResource BrushInputBg}"
+                                        BorderBrush="{DynamicResource BrushBorderPassive}"
+                                        BorderThickness="1"
+                                        VerticalAlignment="Center"/>
+
+                                <!-- Active Track & Fader Cap Thumb -->
+                                <Track x:Name="PART_Track" VerticalAlignment="Center">
+                                    <Track.DecreaseRepeatButton>
+                                        <RepeatButton Command="{x:Static Slider.DecreaseLarge}"
+                                                      Template="{StaticResource SliderDecreaseRepeatButtonTemplate}"/>
+                                    </Track.DecreaseRepeatButton>
+                                    <Track.Thumb>
+                                        <Thumb Style="{StaticResource SliderThumbStyle}"/>
+                                    </Track.Thumb>
+                                    <Track.IncreaseRepeatButton>
+                                        <RepeatButton Command="{x:Static Slider.IncreaseLarge}"
+                                                      Template="{StaticResource SliderIncreaseRepeatButtonTemplate}"/>
+                                    </Track.IncreaseRepeatButton>
+                                </Track>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- ================= YOYU RAZOR-SHARP 0PX BUTTONS ================= -->
+            <Style x:Key="StudioButtonStyle" TargetType="{x:Type Button}">
+                <Setter Property="Background" Value="{DynamicResource BrushCardBg}"/>
+                <Setter Property="Foreground" Value="{DynamicResource BrushInkPrimary}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderPassive}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Padding" Value="12,7"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="FontFamily" Value="{StaticResource FontYoyuSans}"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="FontSize" Value="11.5"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type Button}">
+                            <Border x:Name="border"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="0"
+                                    SnapsToDevicePixels="True">
+                                <ContentPresenter HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  Margin="{TemplateBinding Padding}"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="border" Property="BorderBrush" Value="{DynamicResource BrushBorderActive}"/>
+                                    <Setter TargetName="border" Property="Background" Value="{DynamicResource BrushInputBg}"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="border" Property="Background" Value="{DynamicResource BrushCtaPrimaryBg}"/>
+                                    <Setter TargetName="border" Property="BorderBrush" Value="{DynamicResource BrushCtaPrimaryBg}"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource BrushCtaPrimaryFg}"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="border" Property="Opacity" Value="0.45"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- YOYU Primary CTA Button -->
+            <Style x:Key="YoyuPrimaryButtonStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource StudioButtonStyle}">
+                <Setter Property="Background" Value="{DynamicResource BrushCtaPrimaryBg}"/>
+                <Setter Property="Foreground" Value="{DynamicResource BrushCtaPrimaryFg}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource BrushCtaPrimaryBg}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Padding" Value="14,8"/>
+                <Setter Property="FontFamily" Value="{StaticResource FontYoyuSans}"/>
+                <Setter Property="FontWeight" Value="Bold"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type Button}">
+                            <Border x:Name="border"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="0"
+                                    SnapsToDevicePixels="True">
+                                <ContentPresenter HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  Margin="{TemplateBinding Padding}"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="border" Property="Opacity" Value="0.86"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="border" Property="Opacity" Value="0.72"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="border" Property="Opacity" Value="0.45"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="AccentButtonStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource YoyuPrimaryButtonStyle}">
+                <Setter Property="FontFamily" Value="{StaticResource FontYoyuSans}"/>
+            </Style>
+
+            <!-- Live Emerald Accent Button -->
+            <Style x:Key="EmeraldButtonStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource StudioButtonStyle}">
+                <Setter Property="Background" Value="{DynamicResource BrushCtaPrimaryBg}"/>
+                <Setter Property="Foreground" Value="{DynamicResource BrushCtaPrimaryFg}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource BrushAccentGreen}"/>
+                <Setter Property="BorderThickness" Value="1.5"/>
+                <Setter Property="Padding" Value="14,9"/>
+                <Setter Property="FontFamily" Value="{StaticResource FontYoyuSans}"/>
+                <Setter Property="FontWeight" Value="Bold"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type Button}">
+                            <Border x:Name="border"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="0"
+                                    SnapsToDevicePixels="True">
+                                <ContentPresenter HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  Margin="{TemplateBinding Padding}"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="border" Property="Background" Value="{DynamicResource BrushAccentGreen}"/>
+                                    <Setter Property="Foreground" Value="#000000"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="border" Property="Opacity" Value="0.82"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter TargetName="border" Property="Opacity" Value="0.45"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- ================= YOYU COMBOBOX STYLING ================= -->
+            <Style TargetType="{x:Type ComboBoxItem}">
+                <Setter Property="SnapsToDevicePixels" Value="True"/>
+                <Setter Property="OverridesDefaultStyle" Value="True"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="Foreground" Value="{DynamicResource BrushInkPrimary}"/>
+                <Setter Property="FontFamily" Value="{StaticResource FontYoyuSans}"/>
+                <Setter Property="Padding" Value="10,7"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type ComboBoxItem}">
+                            <Border x:Name="ItemBorder"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="Transparent"
+                                    BorderThickness="1"
+                                    CornerRadius="0"
+                                    Margin="1"
+                                    Padding="{TemplateBinding Padding}"
+                                    SnapsToDevicePixels="True">
+                                <ContentPresenter Content="{TemplateBinding Content}"
+                                                  ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                  VerticalAlignment="Center"
+                                                  HorizontalAlignment="Left"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsHighlighted" Value="True">
+                                    <Setter TargetName="ItemBorder" Property="Background" Value="{DynamicResource BrushInputBg}"/>
+                                </Trigger>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="ItemBorder" Property="Background" Value="{DynamicResource BrushInputBg}"/>
+                                </Trigger>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter TargetName="ItemBorder" Property="Background" Value="{DynamicResource BrushCtaPrimaryBg}"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource BrushCtaPrimaryFg}"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Foreground" Value="{DynamicResource BrushInkMuted}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style TargetType="{x:Type ComboBox}">
+                <Setter Property="SnapsToDevicePixels" Value="True"/>
+                <Setter Property="OverridesDefaultStyle" Value="True"/>
+                <Setter Property="Background" Value="{DynamicResource BrushInputBg}"/>
+                <Setter Property="Foreground" Value="{DynamicResource BrushInkPrimary}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource BrushBorderPassive}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Margin" Value="0,2,0,6"/>
+                <Setter Property="FontFamily" Value="{StaticResource FontYoyuSans}"/>
+                <Setter Property="FontSize" Value="12"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type ComboBox}">
+                            <Grid>
+                                <!-- Full-width ToggleButton -->
+                                <ToggleButton Focusable="False"
+                                              ClickMode="Press"
+                                              IsChecked="{Binding Path=IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                    <ToggleButton.Template>
+                                        <ControlTemplate TargetType="{x:Type ToggleButton}">
+                                            <Border x:Name="border"
+                                                    Background="{DynamicResource BrushInputBg}"
+                                                    BorderBrush="{DynamicResource BrushBorderPassive}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="0"
+                                                    SnapsToDevicePixels="True">
+                                                <Path x:Name="chevron"
+                                                      Data="M 0 0 L 4 4 L 8 0"
+                                                      Stroke="{DynamicResource BrushInkPrimary}"
+                                                      StrokeThickness="1.5"
+                                                      HorizontalAlignment="Right"
+                                                      VerticalAlignment="Center"
+                                                      Margin="0,0,12,0"
+                                                      SnapsToDevicePixels="True"/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="border" Property="BorderBrush" Value="{DynamicResource BrushBorderActive}"/>
+                                                </Trigger>
+                                                <Trigger Property="IsChecked" Value="True">
+                                                    <Setter TargetName="border" Property="BorderBrush" Value="{DynamicResource BrushBorderActive}"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </ToggleButton.Template>
+                                </ToggleButton>
+
+                                <!-- Selected Item Content -->
+                                <ContentPresenter x:Name="ContentSite"
+                                                  IsHitTestVisible="False"
+                                                  Content="{TemplateBinding SelectionBoxItem}"
+                                                  ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                  Margin="12,6,30,6"
+                                                  VerticalAlignment="Center"
+                                                  HorizontalAlignment="Left"
+                                                  TextElement.Foreground="{DynamicResource BrushInkPrimary}"
+                                                  TextElement.FontWeight="Medium"/>
+
+                                <!-- Dropdown Popup -->
+                                <Popup x:Name="PART_Popup"
+                                       AllowsTransparency="True"
+                                       Placement="Bottom"
+                                       IsOpen="{TemplateBinding IsDropDownOpen}"
+                                       PopupAnimation="Fade">
+                                    <Border Background="{DynamicResource BrushCardBg}"
+                                            BorderBrush="{DynamicResource BrushBorderActive}"
+                                            BorderThickness="1"
+                                            CornerRadius="0"
+                                            MinWidth="{TemplateBinding ActualWidth}"
+                                            MaxHeight="240"
+                                            Padding="2"
+                                            SnapsToDevicePixels="True">
+                                        <ScrollViewer Focusable="False"
+                                                      HorizontalScrollBarVisibility="Disabled"
+                                                      VerticalScrollBarVisibility="Auto">
+                                            <StackPanel IsItemsHost="True"
+                                                        KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                        </ScrollViewer>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Opacity" Value="0.5"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

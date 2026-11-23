@@ -2041,24 +2041,25 @@ function onVideoFrame(gen) {
     }
     if (videoEncoder.encodeQueueSize >= 4) return;
 
-    let frameSource = videoEl;
+    const slot = !canvasBusy[0] ? 0 : (!canvasBusy[1] ? 1 : -1);
+    if (slot < 0) return;
+    const c = encodeCanvases[slot];
+    const cCtx = encodeCtxs[slot];
+    if (c.width !== encW || c.height !== encH) {
+      c.width = encW;
+      c.height = encH;
+      if (cCtx) cCtx.imageSmoothingEnabled = false;
+    }
     if (softwareCropZoom > 1.01) {
-      const slot = !canvasBusy[0] ? 0 : (!canvasBusy[1] ? 1 : -1);
-      if (slot < 0) return;
-      const c = encodeCanvases[slot];
-      const cCtx = encodeCtxs[slot];
-      if (c.width !== encW || c.height !== encH) {
-        c.width = encW;
-        c.height = encH;
-        if (cCtx) cCtx.imageSmoothingEnabled = false;
-      }
       const sw = vw / softwareCropZoom;
       const sh = vh / softwareCropZoom;
       const sx = (vw - sw) * 0.5;
       const sy = (vh - sh) * 0.5;
       cCtx.drawImage(videoEl, sx, sy, sw, sh, 0, 0, encW, encH);
-      frameSource = c;
+    } else {
+      cCtx.drawImage(videoEl, 0, 0, encW, encH);
     }
+    const frameSource = c;
 
     lastFrameSendTime = now;
     let frame = null;

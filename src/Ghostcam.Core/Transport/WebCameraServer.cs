@@ -39,6 +39,7 @@ public sealed class WebCameraServer : IDisposable
 
     public event Action<byte[]>? JpegFrameReceived;
     public event Action<byte[]>? H264ChunkReceived;
+    public event Action<byte[]>? H265ChunkReceived;
     public event Action<byte[]>? AudioPacketReceived;
     public event Action<string>? LogMessage;
     public event Action<string>? ClientConnected;
@@ -72,12 +73,13 @@ public sealed class WebCameraServer : IDisposable
 
     public bool HasActiveWebSocketClients => !_activeWebSockets.IsEmpty;
     public bool ForceJpegFallback => _forceJpegFallback;
+    public bool HevcSupported { get; set; }
 
     public string BuildControlJson()
     {
         lock (_stateLock)
         {
-            return $"{{\"v\":{CommandVersion},\"lens\":\"{DesiredLens}\",\"w\":{DesiredWidth},\"h\":{DesiredHeight},\"fps\":{DesiredFps},\"torch\":{(TorchEnabled ? "true" : "false")},\"paused\":{(IsStreamPaused ? "true" : "false")},\"mic\":{(MicEnabled ? "true" : "false")},\"forceJpeg\":{(ForceJpegFallback ? "true" : "false")},\"iso\":{DesiredIso.ToString("0", CultureInfo.InvariantCulture)},\"shutter\":{DesiredShutter.ToString("0", CultureInfo.InvariantCulture)},\"wb\":{DesiredWb.ToString("0", CultureInfo.InvariantCulture)},\"focus\":{DesiredFocus.ToString("0.##", CultureInfo.InvariantCulture)}}}";
+            return $"{{\"v\":{CommandVersion},\"lens\":\"{DesiredLens}\",\"w\":{DesiredWidth},\"h\":{DesiredHeight},\"fps\":{DesiredFps},\"torch\":{(TorchEnabled ? "true" : "false")},\"paused\":{(IsStreamPaused ? "true" : "false")},\"mic\":{(MicEnabled ? "true" : "false")},\"forceJpeg\":{(ForceJpegFallback ? "true" : "false")},\"hevcSupported\":{(HevcSupported ? "true" : "false")},\"iso\":{DesiredIso.ToString("0", CultureInfo.InvariantCulture)},\"shutter\":{DesiredShutter.ToString("0", CultureInfo.InvariantCulture)},\"wb\":{DesiredWb.ToString("0", CultureInfo.InvariantCulture)},\"focus\":{DesiredFocus.ToString("0.##", CultureInfo.InvariantCulture)}}}";
         }
     }
 
@@ -505,6 +507,20 @@ public sealed class WebCameraServer : IDisposable
                                         byte[] pcm = messageBytes[4..];
                                         AudioPacketReceived?.Invoke(pcm);
                                     }
+                                    else if (messageBytes.Length > 4 &&
+                                             messageBytes[0] == (byte)'H' &&
+                                             messageBytes[1] == (byte)'2' &&
+                                             messageBytes[2] == (byte)'6' &&
+                                             messageBytes[3] == (byte)'5')
+                                    {
+                                        byte[] payload = messageBytes[4..];
+                                        long count = Interlocked.Increment(ref _framesLogged);
+                                        if (count <= 5 || count % 150 == 0)
+                                        {
+                                            LogMessage?.Invoke($"[WebCam] WS H265 chunk #{count} ({payload.Length} bytes) from {remoteEp}");
+                                        }
+                                        H265ChunkReceived?.Invoke(payload);
+                                    }
                                     else if ((messageBytes.Length >= 4 && messageBytes[0] == 0 && messageBytes[1] == 0 && messageBytes[2] == 0 && messageBytes[3] == 1) ||
                                              (messageBytes.Length >= 3 && messageBytes[0] == 0 && messageBytes[1] == 0 && messageBytes[2] == 1))
                                     {
@@ -908,7 +924,8 @@ setTimeout(function() {{ window.location.href = '{HttpsUrl}'; }}, 1500);
             .Replace("__INIT_H__", h.ToString())
             .Replace("__INIT_FPS__", fps.ToString())
             .Replace("__INIT_LENS__", lens)
-            .Replace("__INIT_CMD_V__", v.ToString());
+            .Replace("__INIT_CMD_V__", v.ToString())
+            .Replace("__INIT_HEVC__", HevcSupported ? "true" : "false");
     }
 
     private const string MobileHtmlTemplate = @"<!DOCTYPE html>
@@ -1109,14 +1126,15 @@ let softwareCropZoom = 1.0;
 let videoDeviceList = [];
 let activePhysicalLens = null;
 
-let useWebCodecs = false;
+let codecMode = 'jpeg'; // 'jpeg' | 'h264' | 'h265'
+let serverHevcSupported = __INIT_HEVC__;
 let videoEncoder = null;
 let encoderConfigKey = '';
 let encoderInitPromise = null;
-let h264FrameIndex = 0;
-let h264Description = null;
-let h264EnableTime = 0;
-let lastH264OutputTime = 0;
+let codecFrameIndex = 0;
+let codecDescription = null;
+let codecEnableTime = 0;
+let lastCodecOutputTime = 0;
 
 let micActive = false;
 let micStream = null;
@@ -1201,6 +1219,7 @@ async function startCamera() {
   isRestartingCamera = true;
 
   try {
+    closeVideoEncoder();
     if (videoEl.srcObject) {
       try {
         videoEl.srcObject.getTracks().forEach(t => t.stop());
@@ -1543,8 +1562,14 @@ function switchLens(lens) {
 }
 
 function handleServerCommand(cmd) {
-  if (cmd.forceJpeg === true && useWebCodecs) {
-    useWebCodecs = false;
+  if (typeof cmd.hevcSupported === 'boolean') {
+    serverHevcSupported = cmd.hevcSupported;
+    if (codecMode === 'h264' && cmd.forceJpeg !== true) {
+      updateCodecButtonUI();
+    }
+  }
+  if (cmd.forceJpeg === true && codecMode !== 'jpeg') {
+    codecMode = 'jpeg';
     closeVideoEncoder();
     updateCodecButtonUI('สลับกลับ JPEG อัตโนมัติ');
   }
@@ -1676,23 +1701,29 @@ function scheduleNextFrame(gen) {
 
 function updateCodecButtonUI(customTitle) {
   if (!btnCodec) return;
-  if (useWebCodecs) {
+  if (codecMode === 'h265') {
+    btnCodec.textContent = 'H265';
+    btnCodec.classList.add('active');
+    btnCodec.title = customTitle || 'กำลังส่งภาพแบบ H.265 HEVC (แตะเพื่อสลับกลับ JPEG)';
+  } else if (codecMode === 'h264') {
     btnCodec.textContent = 'H264';
     btnCodec.classList.add('active');
-    btnCodec.title = customTitle || 'กำลังส่งภาพแบบ H.264 WebCodecs (แตะเพื่อสลับเป็น JPEG)';
+    btnCodec.title = customTitle || (serverHevcSupported
+      ? 'กำลังส่งภาพแบบ H.264 WebCodecs (แตะเพื่อสลับเป็น H.265)'
+      : 'กำลังส่งภาพแบบ H.264 WebCodecs (แตะเพื่อสลับเป็น JPEG)');
   } else {
     btnCodec.textContent = 'JPEG';
     btnCodec.classList.remove('active');
-    btnCodec.title = customTitle || 'สลับโหมดส่งภาพ JPEG / H.264';
+    btnCodec.title = customTitle || 'สลับโหมดส่งภาพ JPEG / H.264 / H.265';
   }
 }
 
 function closeVideoEncoder() {
   encoderConfigKey = '';
-  h264Description = null;
-  h264FrameIndex = 0;
-  h264EnableTime = 0;
-  lastH264OutputTime = 0;
+  codecDescription = null;
+  codecFrameIndex = 0;
+  codecEnableTime = 0;
+  lastCodecOutputTime = 0;
   if (videoEncoder) {
     try {
       if (videoEncoder.state !== 'closed') videoEncoder.close();
@@ -1714,6 +1745,55 @@ function startsWithAnnexBSps(u8) {
     return (u8[3] & 0x1f) === 7;
   }
   return false;
+}
+
+function startsWithHevcVps(u8) {
+  if (u8.length >= 5 && u8[0] === 0 && u8[1] === 0 && u8[2] === 0 && u8[3] === 1) {
+    return ((u8[4] >> 1) & 0x3f) === 32;
+  }
+  if (u8.length >= 4 && u8[0] === 0 && u8[1] === 0 && u8[2] === 1) {
+    return ((u8[3] >> 1) & 0x3f) === 32;
+  }
+  return false;
+}
+
+function extractHevcAnnexBPrefix(desc) {
+  if (!desc) return null;
+  const raw = (desc instanceof Uint8Array) ? desc : new Uint8Array(desc);
+  if (raw.length === 0) return null;
+  if (startsWithAnnexB(raw)) return raw;
+  if (raw.length >= 23 && raw[0] === 1) {
+    const parts = [];
+    let total = 0;
+    const numOfArrays = raw[22];
+    let offset = 23;
+    for (let i = 0; i < numOfArrays && offset + 3 <= raw.length; i++) {
+      const nalUnitTypeByte = raw[offset++];
+      void nalUnitTypeByte;
+      const numNalus = (raw[offset] << 8) | raw[offset + 1];
+      offset += 2;
+      for (let j = 0; j < numNalus && offset + 2 <= raw.length; j++) {
+        const naluLen = (raw[offset] << 8) | raw[offset + 1];
+        offset += 2;
+        if (offset + naluLen <= raw.length) {
+          parts.push(raw.subarray(offset, offset + naluLen));
+          total += 4 + naluLen;
+        }
+        offset += naluLen;
+      }
+    }
+    if (total > 0) {
+      const out = new Uint8Array(total);
+      let p = 0;
+      for (const nalu of parts) {
+        out[p++] = 0; out[p++] = 0; out[p++] = 0; out[p++] = 1;
+        out.set(nalu, p);
+        p += nalu.length;
+      }
+      return out;
+    }
+  }
+  return null;
 }
 
 function extractAnnexBPrefix(desc) {
@@ -1787,21 +1867,30 @@ function convertAvccToAnnexB(u8) {
   return out;
 }
 
-function ensureVideoEncoder(w, h) {
+function ensureVideoEncoder(w, h, targetCodec) {
+  targetCodec = targetCodec || codecMode;
+  if (targetCodec !== 'h264' && targetCodec !== 'h265') return null;
   if (typeof VideoEncoder === 'undefined') {
-    useWebCodecs = false;
+    codecMode = 'jpeg';
     updateCodecButtonUI('เบราว์เซอร์ไม่รองรับ WebCodecs — ใช้ JPEG');
     return null;
   }
-  const key = `${w}x${h}@${targetFps}`;
+  const key = `${targetCodec}:${w}x${h}@${targetFps}`;
   if (videoEncoder && videoEncoder.state === 'configured' && encoderConfigKey === key) {
     return Promise.resolve(videoEncoder);
   }
   if (encoderInitPromise) return encoderInitPromise;
 
   closeVideoEncoder();
-  const bitrate = w >= 3840 ? 12000000 : (w >= 1920 ? 5000000 : 2500000);
-  const candidates = ['avc1.42002a', 'avc1.42001f'];
+  const longSide = Math.max(w, h);
+  const isHevc = (targetCodec === 'h265');
+  const codecLabel = isHevc ? 'H.265' : 'H.264';
+  const bitrate = isHevc
+    ? (longSide >= 3840 ? 16000000 : (longSide >= 1920 ? 8000000 : 4500000))
+    : (longSide >= 3840 ? 22000000 : (longSide >= 1920 ? 12000000 : 6000000));
+  const candidates = isHevc
+    ? ['hvc1.1.6.L123.B0', 'hvc1.1.6.L120.B0', 'hev1.1.6.L120.B0', 'hvc1.1.6.L93.B0', 'hev1.1.6.L93.B0']
+    : ['avc1.640033', 'avc1.64002a', 'avc1.4d002a', 'avc1.42002a', 'avc1.42001f'];
 
   encoderInitPromise = (async () => {
     try {
@@ -1813,13 +1902,18 @@ function ensureVideoEncoder(w, h) {
           height: h,
           framerate: targetFps,
           bitrate: bitrate,
+          bitrateMode: 'variable',
           latencyMode: 'realtime'
         };
-        const cfg = Object.assign({}, baseCfg, { avc: { format: 'annexb' } });
+        const cfg = isHevc
+          ? Object.assign({}, baseCfg, { hevc: { format: 'annexb' } })
+          : Object.assign({}, baseCfg, { avc: { format: 'annexb' } });
         try {
           const support = await VideoEncoder.isConfigSupported(cfg);
           if (support && support.supported) {
-            chosenConfig = Object.assign({}, support.config || cfg, { avc: { format: 'annexb' } });
+            chosenConfig = isHevc
+              ? Object.assign({}, support.config || cfg, { hevc: { format: 'annexb' } })
+              : Object.assign({}, support.config || cfg, { avc: { format: 'annexb' } });
             break;
           }
         } catch (e) {}
@@ -1832,20 +1926,25 @@ function ensureVideoEncoder(w, h) {
         } catch (e) {}
       }
 
-      if (!chosenConfig || !useWebCodecs) {
-        useWebCodecs = false;
-        updateCodecButtonUI('H.264 ไม่รองรับบนอุปกรณ์นี้ — สลับกลับ JPEG');
+      if (codecMode !== targetCodec) {
+        return null;
+      }
+      if (!chosenConfig) {
+        codecMode = 'jpeg';
+        updateCodecButtonUI(codecLabel + ' ไม่รองรับบนอุปกรณ์นี้ — สลับกลับ JPEG');
         return null;
       }
 
       const enc = new VideoEncoder({
         output: (chunk, meta) => {
-          lastH264OutputTime = performance.now();
+          lastCodecOutputTime = performance.now();
           const rawChunk = new Uint8Array(chunk.byteLength);
           chunk.copyTo(rawChunk);
           if (meta && meta.decoderConfig && meta.decoderConfig.description) {
-            const parsedDesc = extractAnnexBPrefix(meta.decoderConfig.description);
-            if (parsedDesc) h264Description = parsedDesc;
+            const parsedDesc = isHevc
+              ? extractHevcAnnexBPrefix(meta.decoderConfig.description)
+              : extractAnnexBPrefix(meta.decoderConfig.description);
+            if (parsedDesc) codecDescription = parsedDesc;
           }
           let chunkBytes = rawChunk;
           if (!startsWithAnnexB(chunkBytes)) {
@@ -1856,38 +1955,49 @@ function ensureVideoEncoder(w, h) {
             return;
           }
           let outBytes = chunkBytes;
-          if (chunk.type === 'key' && h264Description && !startsWithAnnexBSps(chunkBytes)) {
-            outBytes = new Uint8Array(h264Description.length + chunkBytes.length);
-            outBytes.set(h264Description, 0);
-            outBytes.set(chunkBytes, h264Description.length);
+          if (chunk.type === 'key' && codecDescription) {
+            const hasHeaders = isHevc ? startsWithHevcVps(chunkBytes) : startsWithAnnexBSps(chunkBytes);
+            if (!hasHeaders) {
+              outBytes = new Uint8Array(codecDescription.length + chunkBytes.length);
+              outBytes.set(codecDescription, 0);
+              outBytes.set(chunkBytes, codecDescription.length);
+            }
           }
           if (!startsWithAnnexB(outBytes)) {
             return;
           }
-          const maxBuffer = targetWidth >= 3840 ? 3500000 : 1500000;
+          const maxBuffer = longSide >= 3840 ? 3500000 : 1500000;
           if (ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount < maxBuffer) {
-            ws.send(outBytes);
-            recordFrameStats(w, h, 'H264');
+            if (isHevc) {
+              const pkt = new Uint8Array(4 + outBytes.length);
+              pkt[0] = 0x48; pkt[1] = 0x32; pkt[2] = 0x36; pkt[3] = 0x35;
+              pkt.set(outBytes, 4);
+              ws.send(pkt);
+              recordFrameStats(w, h, 'H265');
+            } else {
+              ws.send(outBytes);
+              recordFrameStats(w, h, 'H264');
+            }
           }
         },
         error: () => {
-          useWebCodecs = false;
+          codecMode = 'jpeg';
           closeVideoEncoder();
-          updateCodecButtonUI('H.264 Encoder ขัดข้อง — สลับกลับ JPEG');
+          updateCodecButtonUI(codecLabel + ' Encoder ขัดข้อง — สลับกลับ JPEG');
         }
       });
-      h264EnableTime = performance.now();
-      lastH264OutputTime = 0;
+      codecEnableTime = performance.now();
+      lastCodecOutputTime = 0;
       enc.configure(chosenConfig);
       videoEncoder = enc;
       encoderConfigKey = key;
-      h264FrameIndex = 0;
-      h264Description = null;
+      codecFrameIndex = 0;
+      codecDescription = null;
       return enc;
     } catch (e) {
-      useWebCodecs = false;
+      codecMode = 'jpeg';
       closeVideoEncoder();
-      updateCodecButtonUI('H.264 ไม่รองรับ — ใช้ JPEG');
+      updateCodecButtonUI(codecLabel + ' ไม่รองรับ — ใช้ JPEG');
       return null;
     } finally {
       encoderInitPromise = null;
@@ -1902,15 +2012,16 @@ function onVideoFrame(gen) {
   lastFrameTickTime = performance.now();
   scheduleNextFrame(gen);
   const maxEncodes = (targetFps >= 60 && !coolMode) ? 2 : 1;
-  if (document.visibilityState !== 'visible' || isPaused || (!useWebCodecs && encodesInFlight >= maxEncodes)) return;
+  if (document.visibilityState !== 'visible' || isPaused || (codecMode === 'jpeg' && encodesInFlight >= maxEncodes)) return;
   if (videoEl.readyState < 2) return;
 
   const minGap = (1000 / targetFps) * 0.85;
   const now = performance.now();
-  if (useWebCodecs && videoEncoder && videoEncoder.state === 'configured' && !lastH264OutputTime && h264EnableTime > 0 && (now - h264EnableTime > 1500)) {
-    useWebCodecs = false;
+  if (codecMode !== 'jpeg' && videoEncoder && videoEncoder.state === 'configured' && !lastCodecOutputTime && codecEnableTime > 0 && (now - codecEnableTime > 1500)) {
+    const failedLabel = codecMode === 'h265' ? 'H.265' : 'H.264';
+    codecMode = 'jpeg';
     closeVideoEncoder();
-    updateCodecButtonUI('H.264 ไม่ส่งเฟรม — สลับกลับ JPEG');
+    updateCodecButtonUI(failedLabel + ' ไม่ส่งเฟรม — สลับกลับ JPEG');
   }
   if (now - lastFrameSendTime < minGap) return;
 
@@ -1919,13 +2030,13 @@ function onVideoFrame(gen) {
   const vw = videoEl.videoWidth || w;
   const vh = videoEl.videoHeight || h;
 
-  if (useWebCodecs && ws && ws.readyState === WebSocket.OPEN) {
+  if (codecMode !== 'jpeg' && ws && ws.readyState === WebSocket.OPEN) {
     const encW = w & ~1;
     const encH = h & ~1;
     if (encW < 2 || encH < 2) return;
-    const key = `${encW}x${encH}@${targetFps}`;
+    const key = `${codecMode}:${encW}x${encH}@${targetFps}`;
     if (!videoEncoder || videoEncoder.state !== 'configured' || encoderConfigKey !== key) {
-      ensureVideoEncoder(encW, encH);
+      ensureVideoEncoder(encW, encH, codecMode);
       return;
     }
     if (videoEncoder.encodeQueueSize >= 4) return;
@@ -1953,13 +2064,14 @@ function onVideoFrame(gen) {
     let frame = null;
     try {
       frame = new VideoFrame(frameSource, { timestamp: Math.round(now * 1000) });
-      const isKey = (h264FrameIndex % 60 === 0);
-      h264FrameIndex++;
+      const isKey = (codecFrameIndex % 60 === 0);
+      codecFrameIndex++;
       videoEncoder.encode(frame, { keyFrame: isKey });
     } catch (e) {
-      useWebCodecs = false;
+      const failedLabel = codecMode === 'h265' ? 'H.265' : 'H.264';
+      codecMode = 'jpeg';
       closeVideoEncoder();
-      updateCodecButtonUI('H.264 Encode ล้มเหลว — ใช้ JPEG');
+      updateCodecButtonUI(failedLabel + ' Encode ล้มเหลว — ใช้ JPEG');
     } finally {
       if (frame) frame.close();
     }
@@ -2051,7 +2163,7 @@ function recordFrameStats(w, h, transport) {
     frameCount = 0;
     lastFpsTime = now;
 
-    if (transport === 'WS' || transport === 'H264') {
+    if (transport === 'WS' || transport === 'H264' || transport === 'H265') {
       sendWsTelemetry({
         type: 'stats',
         w: w,
@@ -2297,13 +2409,18 @@ if (btnCodec) {
       btnCodec.style.display = 'none';
       return;
     }
-    useWebCodecs = !useWebCodecs;
-    if (!useWebCodecs) {
-      closeVideoEncoder();
-    } else if (isStreaming) {
+    if (codecMode === 'jpeg') {
+      codecMode = 'h264';
+    } else if (codecMode === 'h264') {
+      codecMode = serverHevcSupported ? 'h265' : 'jpeg';
+    } else {
+      codecMode = 'jpeg';
+    }
+    closeVideoEncoder();
+    if (codecMode !== 'jpeg' && isStreaming) {
       const w = (videoEl.videoWidth || targetWidth) & ~1;
       const h = (videoEl.videoHeight || targetHeight) & ~1;
-      if (w >= 2 && h >= 2) ensureVideoEncoder(w, h);
+      if (w >= 2 && h >= 2) ensureVideoEncoder(w, h, codecMode);
     }
     updateCodecButtonUI();
   });

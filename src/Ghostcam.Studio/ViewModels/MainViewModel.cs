@@ -60,6 +60,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private readonly CamoMobileSessionServer _sessionServer;
     private readonly UsbDeviceBridge _usbBridge;
     private readonly H264NalParser _nalParser;
+    private readonly H265NalParser _h265Parser;
     private readonly WebCameraServer _webCameraServer;
     private readonly WaveOutAudioPlayer _audioPlayer;
     private readonly StudioVideoRecorder _videoRecorder;
@@ -94,6 +95,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private int _renderedFrameCount = 0;
     private long _webCamFramesDecoded = 0;
     private int _h264ChunksSinceLastDecode = 0;
+    private int _h265ChunksSinceLastDecode = 0;
     private byte[]? _decodeBgraBuffer;
     private long _webCamBytesInWindow;
     private int _lastReportedWebWidth;
@@ -639,6 +641,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _virtualCameraDriver = new CamoVirtualCameraDriver();
         _ghostCamMf = new GhostCamMfVirtualCamera();
         _nalParser = new H264NalParser();
+        _h265Parser = new H265NalParser();
         _audioPlayer = new WaveOutAudioPlayer();
         _videoRecorder = new StudioVideoRecorder();
 
@@ -646,7 +649,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _sessionServer = new CamoMobileSessionServer();
         _usbBridge = new UsbDeviceBridge(_sessionServer);
         _qrPairingService = new CamoQrPairingService();
-        _webCameraServer = new WebCameraServer();
+        _webCameraServer = new WebCameraServer
+        {
+            HevcSupported = _h265Parser.IsAvailable
+        };
+        LogToFile($"[Codec] HEVC/H.265 Media Foundation decoder available: {_h265Parser.IsAvailable}");
         AttachQrPairingHandlers();
 
         // 2B. Initialize Debounced Auto-Save & Load Saved Studio Settings
@@ -894,6 +901,15 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 _syntheticSource.Stop();
             ProcessAndRenderFrame(bgraFrame, width, height);
         };
+        _h265Parser.OnFrameDecoded += (bgraFrame, width, height) =>
+        {
+            _hasDecodedRealFrame = true;
+            Interlocked.Exchange(ref _h265ChunksSinceLastDecode, 0);
+            Interlocked.Exchange(ref _lastRealFrameTimestamp, Stopwatch.GetTimestamp());
+            if (_syntheticSource.IsRunning)
+                _syntheticSource.Stop();
+            ProcessAndRenderFrame(bgraFrame, width, height);
+        };
         _sessionServer.ClientConnected += HandleClientConnected;
         _sessionServer.ClientDisconnected += HandleClientDisconnected;
         _sessionServer.DeviceInfoUpdated += HandleDeviceInfoUpdated;
@@ -942,6 +958,29 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             if (Interlocked.Increment(ref _h264ChunksSinceLastDecode) > 45)
             {
                 Interlocked.Exchange(ref _h264ChunksSinceLastDecode, 0);
+                _webCameraServer.RequestForceJpegFallback();
+            }
+        };
+        _webCameraServer.H265ChunkReceived += chunk =>
+        {
+            Interlocked.Add(ref _webCamBytesInWindow, chunk.Length);
+            Interlocked.Increment(ref _webCamFramesDecoded);
+            Interlocked.Exchange(ref _lastRealFrameTimestamp, Stopwatch.GetTimestamp());
+            if (!IsPhoneConnected || SourceMode != CamoSourceMode.SafariWebCam || ConnectionStatusBadge != "🟢 WEBCODECS H265 (LIVE)")
+            {
+                _ = _dispatcher.BeginInvoke(() =>
+                {
+                    SourceMode = CamoSourceMode.SafariWebCam;
+                    ConnectionStatusBadge = "🟢 WEBCODECS H265 (LIVE)";
+                    IsPhoneConnected = true;
+                    if (string.IsNullOrEmpty(ConnectedPhoneName) || ConnectedPhoneName == "No Mobile Connected")
+                        ConnectedPhoneName = "iPhone / Mobile (H265)";
+                });
+            }
+            _h265Parser.FeedChunk(chunk);
+            if (Interlocked.Increment(ref _h265ChunksSinceLastDecode) > 45)
+            {
+                Interlocked.Exchange(ref _h265ChunksSinceLastDecode, 0);
                 _webCameraServer.RequestForceJpegFallback();
             }
         };
@@ -1028,6 +1067,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
                 _hasDecodedRealFrame = true;
                 Interlocked.Exchange(ref _h264ChunksSinceLastDecode, 0);
+                Interlocked.Exchange(ref _h265ChunksSinceLastDecode, 0);
                 Interlocked.Exchange(ref _lastRealFrameTimestamp, Stopwatch.GetTimestamp());
                 if (_syntheticSource.IsRunning)
                 {
@@ -2133,6 +2173,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _ = _sessionServer.DisposeAsync();
         _ = _usbBridge.DisposeAsync();
         _nalParser.Dispose();
+        _h265Parser.Dispose();
     }
 }
 

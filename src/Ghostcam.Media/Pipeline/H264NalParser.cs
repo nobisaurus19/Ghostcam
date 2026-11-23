@@ -69,6 +69,7 @@ public sealed class H264NalParser : IDisposable
     private static readonly Guid MF_MT_MAJOR_TYPE = new("48eba18e-f8c9-4687-bf11-0a74c9f96a8f");
     private static readonly Guid MF_MT_SUBTYPE = new("f7e34c9a-42e8-4714-b74b-cb29d72c35e5");
     private static readonly Guid MF_MT_FRAME_SIZE = new("1652c33d-d6b2-4012-b834-72030849a37d");
+    private static readonly Guid MF_MT_MINIMUM_DISPLAY_APERTURE = new("d7388766-18fe-48c6-a177-ee894867c8c4");
     private static readonly Guid MF_MT_DEFAULT_STRIDE = new("644b4e48-1e02-4516-b0eb-c01ca9d49ac6");
     private static readonly Guid MFMediaType_Video = new("73646976-0000-0010-8000-00aa00389b71");
     private static readonly Guid MFVideoFormat_H264 = new("34363248-0000-0010-8000-00aa00389b71");
@@ -82,6 +83,7 @@ public sealed class H264NalParser : IDisposable
     private const uint MFT_MESSAGE_NOTIFY_BEGIN_STREAMING = 0x10000000;
     private const uint MFT_MESSAGE_NOTIFY_END_STREAMING = 0x10000001;
     private const uint MFT_MESSAGE_NOTIFY_START_OF_STREAM = 0x10000003;
+    private const uint MFT_OUTPUT_STREAM_PROVIDES_SAMPLES = 0x00000100;
 
     private readonly List<byte> _streamBuffer = new(131072);
     private readonly Stopwatch _statsStopwatch = Stopwatch.StartNew();
@@ -98,10 +100,13 @@ public sealed class H264NalParser : IDisposable
     private IMFTransform? _decoder;
     private readonly object _decoderLock = new();
     private bool _decoderInitialized;
+    private int _codedWidth = 1920;
+    private int _codedHeight = 1080;
     private int _decodedWidth = 1920;
     private int _decodedHeight = 1080;
     private int _decodedStride = 1920;
     private uint _outputBufferSize = 4147200;
+    private bool _outputStreamProvidesSamples;
     private byte[]? _bgraStagingBuffer;
 
     public StreamStatistics Stats { get; } = new();
@@ -184,47 +189,99 @@ public sealed class H264NalParser : IDisposable
             int hr = _decoder.GetOutputAvailableType(0, i, out IMFMediaType outType);
             if (hr != S_OK) break;
 
-            var outAttr = (IMFAttributes)outType;
-            if (outAttr.GetGUID(MF_MT_SUBTYPE, out Guid subType) == S_OK && subType == MFVideoFormat_NV12)
+            try
             {
-                hr = _decoder.SetOutputType(0, outType, 0);
-                if (hr == S_OK)
+                var outAttr = (IMFAttributes)outType;
+                if (outAttr.GetGUID(MF_MT_SUBTYPE, out Guid subType) == S_OK && subType == MFVideoFormat_NV12)
                 {
-                    // Query resolution and stride
-                    if (outAttr.GetUINT64(MF_MT_FRAME_SIZE, out ulong frameSize) == S_OK && frameSize != 0)
+                    hr = _decoder.SetOutputType(0, outType, 0);
+                    if (hr == S_OK)
                     {
-                        int w = (int)(frameSize >> 32);
-                        int h = (int)(frameSize & 0xFFFFFFFF);
-                        if (w > 0 && h > 0)
+                        // Query coded frame size and visible display aperture
+                        if (outAttr.GetUINT64(MF_MT_FRAME_SIZE, out ulong frameSize) == S_OK && frameSize != 0)
                         {
-                            _decodedWidth = w;
-                            _decodedHeight = h;
-                            Stats.Width = w;
-                            Stats.Height = h;
-                            OnResolutionChanged?.Invoke(w, h);
+                            int w = (int)(frameSize >> 32);
+                            int h = (int)(frameSize & 0xFFFFFFFF);
+                            if (w > 0 && h > 0)
+                            {
+                                _codedWidth = w;
+                                _codedHeight = h;
+
+                                int visW = 0;
+                                int visH = 0;
+                                if (outAttr.GetBlobSize(MF_MT_MINIMUM_DISPLAY_APERTURE, out uint apSize) == S_OK && apSize >= 16 && apSize <= 1024)
+                                {
+                                    byte[] apBuf = new byte[apSize];
+                                    unsafe
+                                    {
+                                        fixed (byte* pAp = apBuf)
+                                        {
+                                            if (outAttr.GetBlob(MF_MT_MINIMUM_DISPLAY_APERTURE, (IntPtr)pAp, apSize, out _) == S_OK)
+                                            {
+                                                int cx = BitConverter.ToInt32(apBuf, 8);
+                                                int cy = BitConverter.ToInt32(apBuf, 12);
+                                                if (cx > 0 && cy > 0 && cx <= _codedWidth && cy <= _codedHeight)
+                                                {
+                                                    visW = cx;
+                                                    visH = cy;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (visW <= 0 || visH <= 0)
+                                {
+                                    if (Stats.Width > 0 && Stats.Height > 0 && Stats.Width <= _codedWidth && Stats.Height <= _codedHeight)
+                                    {
+                                        visW = Stats.Width;
+                                        visH = Stats.Height;
+                                    }
+                                    else
+                                    {
+                                        visW = _codedWidth;
+                                        visH = _codedHeight;
+                                    }
+                                }
+
+                                _decodedWidth = visW;
+                                _decodedHeight = visH;
+                                Stats.Width = visW;
+                                Stats.Height = visH;
+                                OnResolutionChanged?.Invoke(visW, visH);
+                            }
                         }
-                    }
 
-                    if (outAttr.GetUINT32(MF_MT_DEFAULT_STRIDE, out uint stride) == S_OK && stride > 0)
-                    {
-                        _decodedStride = (int)stride;
-                    }
-                    else
-                    {
-                        _decodedStride = _decodedWidth;
-                    }
+                        if (outAttr.GetUINT32(MF_MT_DEFAULT_STRIDE, out uint stride) == S_OK && stride > 0)
+                        {
+                            _decodedStride = (int)stride;
+                        }
+                        else
+                        {
+                            _decodedStride = _codedWidth;
+                        }
 
-                    MFT_OUTPUT_STREAM_INFO streamInfo = default;
-                    if (_decoder.GetOutputStreamInfo(0, ref streamInfo) == S_OK && streamInfo.cbSize > 0)
-                    {
-                        _outputBufferSize = streamInfo.cbSize;
-                    }
-                    else
-                    {
-                        _outputBufferSize = (uint)(_decodedStride * _decodedHeight * 3 / 2);
-                    }
+                        MFT_OUTPUT_STREAM_INFO streamInfo = default;
+                        if (_decoder.GetOutputStreamInfo(0, ref streamInfo) == S_OK)
+                        {
+                            _outputStreamProvidesSamples = (streamInfo.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES) != 0;
+                            _outputBufferSize = Math.Max(streamInfo.cbSize, (uint)(_decodedStride * _codedHeight * 3 / 2));
+                        }
+                        else
+                        {
+                            _outputStreamProvidesSamples = false;
+                            _outputBufferSize = (uint)(_decodedStride * _codedHeight * 3 / 2);
+                        }
 
-                    return true;
+                        return true;
+                    }
+                }
+            }
+            finally
+            {
+                if (outType != null && Marshal.IsComObject(outType))
+                {
+                    Marshal.FinalReleaseComObject(outType);
                 }
             }
         }
@@ -291,29 +348,52 @@ public sealed class H264NalParser : IDisposable
                     packetBytes = chunk.ToArray();
                 }
 
-                int hr = NativeMf.MFCreateSample(out IMFSample inputSample);
-                if (hr != S_OK) return;
-
-                hr = NativeMf.MFCreateMemoryBuffer((uint)packetBytes.Length, out IMFMediaBuffer inMediaBuffer);
-                if (hr != S_OK) return;
-
-                inMediaBuffer.Lock(out IntPtr pInBuf, out _, out _);
-                Marshal.Copy(packetBytes, 0, pInBuf, packetBytes.Length);
-                inMediaBuffer.Unlock();
-                inMediaBuffer.SetCurrentLength((uint)packetBytes.Length);
-
-                inputSample.AddBuffer(inMediaBuffer);
-
-                hr = _decoder.ProcessInput(0, inputSample, 0);
-                if (hr == MF_E_NOTACCEPTING)
+                IMFSample? inputSample = null;
+                IMFMediaBuffer? inMediaBuffer = null;
+                try
                 {
-                    DrainDecodedFrames();
+                    int hr = NativeMf.MFCreateSample(out inputSample);
+                    if (hr != S_OK || inputSample == null) return;
+
+                    hr = NativeMf.MFCreateMemoryBuffer((uint)packetBytes.Length, out inMediaBuffer);
+                    if (hr != S_OK || inMediaBuffer == null) return;
+
+                    hr = inMediaBuffer.Lock(out IntPtr pInBuf, out _, out _);
+                    if (hr != S_OK) return;
+                    try
+                    {
+                        Marshal.Copy(packetBytes, 0, pInBuf, packetBytes.Length);
+                    }
+                    finally
+                    {
+                        inMediaBuffer.Unlock();
+                    }
+                    inMediaBuffer.SetCurrentLength((uint)packetBytes.Length);
+
+                    inputSample.AddBuffer(inMediaBuffer);
+
                     hr = _decoder.ProcessInput(0, inputSample, 0);
-                }
+                    if (hr == MF_E_NOTACCEPTING)
+                    {
+                        DrainDecodedFrames();
+                        hr = _decoder.ProcessInput(0, inputSample, 0);
+                    }
 
-                if (hr == S_OK)
+                    if (hr == S_OK)
+                    {
+                        DrainDecodedFrames();
+                    }
+                }
+                finally
                 {
-                    DrainDecodedFrames();
+                    if (inMediaBuffer != null && Marshal.IsComObject(inMediaBuffer))
+                    {
+                        Marshal.FinalReleaseComObject(inMediaBuffer);
+                    }
+                    if (inputSample != null && Marshal.IsComObject(inputSample))
+                    {
+                        Marshal.FinalReleaseComObject(inputSample);
+                    }
                 }
             }
             catch
@@ -338,44 +418,91 @@ public sealed class H264NalParser : IDisposable
 
         while (true)
         {
-            int hr = NativeMf.MFCreateSample(out IMFSample outputSample);
-            if (hr != S_OK) break;
-
-            uint bufSize = Math.Max(_outputBufferSize, (uint)(_decodedStride * _decodedHeight * 3 / 2));
-            hr = NativeMf.MFCreateMemoryBuffer(bufSize, out IMFMediaBuffer outMediaBuffer);
-            if (hr != S_OK) break;
-
-            outputSample.AddBuffer(outMediaBuffer);
+            IMFSample? outputSample = null;
+            IMFMediaBuffer? outMediaBuffer = null;
+            IMFSample? providedSample = null;
+            IMFMediaBuffer? providedBuffer = null;
 
             MFT_OUTPUT_DATA_BUFFER outData = new()
             {
                 dwStreamID = 0,
-                pSample = Marshal.GetIUnknownForObject(outputSample),
+                pSample = IntPtr.Zero,
                 dwStatus = 0,
                 pEvents = IntPtr.Zero
             };
 
-            hr = _decoder.ProcessOutput(0, 1, ref outData, out _);
-
-            if (hr == S_OK)
+            try
             {
-                ExtractAndEmitFrame(outMediaBuffer);
+                if (!_outputStreamProvidesSamples)
+                {
+                    int hrCreate = NativeMf.MFCreateSample(out outputSample);
+                    if (hrCreate != S_OK || outputSample == null) break;
 
-                if (outData.pSample != IntPtr.Zero) Marshal.Release(outData.pSample);
-                if (outData.pEvents != IntPtr.Zero) Marshal.Release(outData.pEvents);
+                    uint bufSize = Math.Max(_outputBufferSize, (uint)(_decodedStride * _codedHeight * 3 / 2));
+                    hrCreate = NativeMf.MFCreateMemoryBuffer(bufSize, out outMediaBuffer);
+                    if (hrCreate != S_OK || outMediaBuffer == null) break;
+
+                    outputSample.AddBuffer(outMediaBuffer);
+                    outData.pSample = Marshal.GetIUnknownForObject(outputSample);
+                }
+
+                int hr = _decoder.ProcessOutput(0, 1, ref outData, out _);
+
+                if (hr == S_OK)
+                {
+                    if (_outputStreamProvidesSamples)
+                    {
+                        if (outData.pSample != IntPtr.Zero)
+                        {
+                            providedSample = Marshal.GetObjectForIUnknown(outData.pSample) as IMFSample;
+                            if (providedSample != null &&
+                                providedSample.GetBufferByIndex(0, out providedBuffer) == S_OK &&
+                                providedBuffer != null)
+                            {
+                                ExtractAndEmitFrame(providedBuffer);
+                            }
+                        }
+                    }
+                    else if (outMediaBuffer != null)
+                    {
+                        ExtractAndEmitFrame(outMediaBuffer);
+                    }
+                }
+                else if (hr == MF_E_TRANSFORM_STREAM_CHANGE)
+                {
+                    if (!NegotiateOutputType()) break;
+                }
+                else
+                {
+                    break;
+                }
             }
-            else if (hr == MF_E_TRANSFORM_STREAM_CHANGE)
+            finally
             {
-                if (outData.pSample != IntPtr.Zero) Marshal.Release(outData.pSample);
-                if (outData.pEvents != IntPtr.Zero) Marshal.Release(outData.pEvents);
-
-                NegotiateOutputType();
-            }
-            else
-            {
-                if (outData.pSample != IntPtr.Zero) Marshal.Release(outData.pSample);
-                if (outData.pEvents != IntPtr.Zero) Marshal.Release(outData.pEvents);
-                break;
+                if (providedBuffer != null && Marshal.IsComObject(providedBuffer))
+                {
+                    Marshal.FinalReleaseComObject(providedBuffer);
+                }
+                if (providedSample != null && Marshal.IsComObject(providedSample))
+                {
+                    Marshal.FinalReleaseComObject(providedSample);
+                }
+                if (outData.pSample != IntPtr.Zero)
+                {
+                    Marshal.Release(outData.pSample);
+                }
+                if (outData.pEvents != IntPtr.Zero)
+                {
+                    Marshal.Release(outData.pEvents);
+                }
+                if (outMediaBuffer != null && Marshal.IsComObject(outMediaBuffer))
+                {
+                    Marshal.FinalReleaseComObject(outMediaBuffer);
+                }
+                if (outputSample != null && Marshal.IsComObject(outputSample))
+                {
+                    Marshal.FinalReleaseComObject(outputSample);
+                }
             }
         }
     }
@@ -406,6 +533,8 @@ public sealed class H264NalParser : IDisposable
         {
             int width = _decodedWidth > 0 ? _decodedWidth : 1920;
             int height = _decodedHeight > 0 ? _decodedHeight : 1080;
+            if (_codedWidth > 0 && width > _codedWidth) width = _codedWidth;
+            if (_codedHeight > 0 && height > _codedHeight) height = _codedHeight;
             int bgraSize = width * height * 4;
 
             if (_bgraStagingBuffer == null || _bgraStagingBuffer.Length < bgraSize)
@@ -413,7 +542,8 @@ public sealed class H264NalParser : IDisposable
                 _bgraStagingBuffer = new byte[bgraSize];
             }
 
-            ConvertNv12ToBgra32((byte*)pData, pitch, width, height, _bgraStagingBuffer);
+            int yPlaneH = _codedHeight > 0 ? _codedHeight : height;
+            ConvertNv12ToBgra32((byte*)pData, pitch, width, height, _bgraStagingBuffer, yPlaneH);
 
             OnFrameDecoded?.Invoke(_bgraStagingBuffer, width, height);
         }
@@ -433,7 +563,7 @@ public sealed class H264NalParser : IDisposable
     /// <summary>
     /// Converts a decoded NV12 frame buffer to high-quality BGRA32 using SIMD-style parallel ITU-R BT.709 integer arithmetic.
     /// </summary>
-    public static unsafe void ConvertNv12ToBgra32(byte* nv12Ptr, int stride, int width, int height, byte[] bgraOut)
+    public static unsafe void ConvertNv12ToBgra32(byte* nv12Ptr, int stride, int width, int height, byte[] bgraOut, int yPlaneHeight = 0)
     {
         if (nv12Ptr == null || width <= 0 || height <= 0 || bgraOut == null || bgraOut.Length < width * height * 4)
         {
@@ -441,7 +571,8 @@ public sealed class H264NalParser : IDisposable
         }
 
         nint nv12Address = (nint)nv12Ptr;
-        int yPlaneSize = stride * height;
+        int actualPlaneH = yPlaneHeight > 0 ? yPlaneHeight : height;
+        int yPlaneSize = stride * actualPlaneH;
 
         fixed (byte* pBgraBase = bgraOut)
         {
